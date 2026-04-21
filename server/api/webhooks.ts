@@ -1,50 +1,33 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { copyFileSync, existsSync, mkdirSync, promises } from 'fs';
 
-import dispatcher from '../helpers/dispatcher.js';
-import errors from '../helpers/errors.js';
-import globalUtils from '../helpers/globalutils.js';
+import dispatcher from '../helpers/dispatcher.ts';
+import errors from '../helpers/errors.ts';
+import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
 import md5 from '../helpers/md5.ts';
-import { authMiddleware, guildPermissionsMiddleware } from '../helpers/middlewares.js';
-import Snowflake from '../helpers/snowflake.js';
+import { authMiddleware, guildPermissionsMiddleware } from '../helpers/middlewares.ts';
+import Snowflake from '../helpers/snowflake.ts';
+import { ChannelService } from './services/channelService.ts';
+import { WebhookService } from './services/webhookService.ts';
+import type { Embed } from '../types/embed.ts';
+import { MessageService } from './services/messageService.ts';
+import { GuildService } from './services/guildService.ts';
+import type { WebhookOverride } from '../types/webhook.ts';
 
 const router = Router({ mergeParams: true });
-
-router.param('webhookid', async (req, res, next, webhookid) => {
-  req.webhook = await global.database.getWebhookById(webhookid);
-
-  next();
-});
 
 router.patch(
   '/:webhookid',
   authMiddleware,
   guildPermissionsMiddleware('MANAGE_WEBHOOKS'),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       if (!req.body.channel_id) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const channel = await global.database.getChannelById(req.body.channel_id);
-
-      if (!channel) {
-        return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-      }
-
-      const webhook = req.webhook;
-
-      if (!webhook) {
-        return res.status(404).json(errors.response_404.UNKNOWN_WEBHOOK);
-      }
-
-      const guild = await global.database.getGuildById(webhook.guild_id);
-
-      if (!guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
+      const webhook = req.webhook!!;
       const newName = req.body.name;
 
       if (!newName) {
@@ -62,9 +45,9 @@ router.patch(
       const finalName = newName ?? webhook.name ?? 'Captain Hook';
       const finalAvatar = req.body.avatar !== undefined ? req.body.avatar : webhook.avatar;
 
-      const tryUpdate = await global.database.updateWebhook(
-        webhook,
-        channel,
+      const tryUpdate = await WebhookService.updateWebhook(
+        webhook.id,
+        req.body.channel_id,
         finalName,
         finalAvatar,
       );
@@ -86,25 +69,11 @@ router.delete(
   '/:webhookid',
   authMiddleware,
   guildPermissionsMiddleware('MANAGE_WEBHOOKS'),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const webhook = req.webhook;
+      const webhook = req.webhook!!;
 
-      if (!webhook) {
-        return res.status(404).json(errors.response_404.UNKNOWN_WEBHOOK);
-      }
-
-      const guild = await global.database.getGuildById(webhook.guild_id);
-
-      if (!guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
-      const tryDelete = await global.database.deleteWebhook(webhook.id);
-
-      if (!tryDelete) {
-        return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
-      }
+      await WebhookService.deleteWebhook(webhook.id);
 
       return res.status(204).send();
     } catch (error) {
@@ -115,28 +84,16 @@ router.delete(
   },
 );
 
-router.post('/:webhookid/:webhooktoken', async (req, res) => {
+router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => {
   try {
-    const webhook = req.webhook;
+    const webhook = req.webhook!!;
 
-    if (!webhook) {
-      return res.status(404).json(errors.response_404.UNKNOWN_WEBHOOK);
-    }
-
-    const guild = await global.database.getGuildById(webhook.guild_id);
-
-    if (!guild) {
-      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-    }
-
-    const channel = await global.database.getChannelById(webhook.channel_id);
-
-    if (!channel) {
-      return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-    } // I dont know if it should return these error messages so bluntly, but whatever
+    const guild = await GuildService.getById(webhook.guild_id);
+    const channel = await ChannelService.getChannelById(webhook.channel_id); //to-do: this better
 
     let create_override = false;
-    const override = {
+
+    const override: WebhookOverride = {
       username: null,
       avatar_url: null,
     };
@@ -155,7 +112,8 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
 
         if (response.ok) {
           const contentType = response.headers.get('content-type');
-          let extension = contentType.split('/')[1]; // 'png', 'jpeg', etc.
+
+          let extension = contentType?.split('/')[1];
 
           var name = globalUtils.generateString(30);
           var name_hash = md5(name);
@@ -175,7 +133,7 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
             Buffer.from(arrayBuffer),
           );
 
-          override.avatar_url = name_hash;
+          override.avatar_url = name_hash; //to-do: use the uploadService
         }
       } catch (error) {
         logText(error, 'error');
@@ -185,7 +143,7 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
     const override_id = Snowflake.generate();
 
     let embeds = [];
-    const MAX_EMBEDS = 10; //to-do make this configurable
+    const MAX_EMBEDS = 10;
 
     const proxyUrl = (url) => {
       return url ? `/proxy/${encodeURIComponent(url)}` : null;
@@ -193,7 +151,7 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
 
     if (Array.isArray(req.body.embeds)) {
       embeds = req.body.embeds.slice(0, MAX_EMBEDS).map((embed) => {
-        const embedObj = {
+        const embedObj: Embed = {
           type: 'rich',
           color: embed.color ?? 7506394,
         };
@@ -217,13 +175,20 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
         if (embed.thumbnail?.url) {
           const thumb = proxyUrl(embed.thumbnail.url);
 
-          embedObj.thumbnail = { url: thumb, proxy_url: thumb };
+          if (thumb) {
+            embedObj.thumbnail = {
+              url: thumb,
+              proxy_url: thumb
+            }
+          }
         }
 
         if (embed.image?.url) {
           const img = proxyUrl(embed.image.url);
 
-          embedObj.image = { url: img, proxy_url: img };
+          if (img) {
+            embedObj.image = { url: img, proxy_url: img };
+          }
         }
 
         if (embed.footer) {
@@ -248,18 +213,16 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
       });
     }
 
-    const createMessage = await global.database.createMessage(
-      !channel.guild_id ? null : channel.guild_id,
-      channel.id,
+    const createMessage = await MessageService.createMessage(
+      !channel!.guild_id ? null : channel!.guild_id,
+      channel!!.id,
       create_override ? `WEBHOOK_${webhook.id}_${override_id}` : `WEBHOOK_${webhook.id}`,
       req.body.content,
       req.body.nonce,
-      null,
+      [],
       req.body.tts,
-      false,
-      null,
+      { mention_everyone: false, mentions: [], mention_roles: [] },
       embeds,
-      webhook,
     );
 
     if (!createMessage) {
@@ -267,10 +230,10 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
     }
 
     if (create_override) {
-      const tryCreateOverride = await global.database.createWebhookOverride(
+      const tryCreateOverride = await WebhookService.createWebhookOverride(
         webhook.id,
         override_id,
-        override.username,
+        override.username ?? webhook.name ?? 'Captain Hook',
         override.avatar_url,
       );
 
@@ -282,7 +245,7 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
       createMessage.author.avatar = override.avatar_url;
     }
 
-    await dispatcher.dispatchEventInChannel(guild, channel.id, 'MESSAGE_CREATE', createMessage);
+    await dispatcher.dispatchEventInChannel(guild.id, channel!!.id, 'MESSAGE_CREATE', createMessage);
 
     return res.status(204).send();
   } catch (error) {
@@ -292,21 +255,10 @@ router.post('/:webhookid/:webhooktoken', async (req, res) => {
   }
 });
 
-router.post('/:webhookid/:webhooktoken/github', async (req, res) => {
+router.post('/:webhookid/:webhooktoken/github', async (req: Request, res: Response) => {
   try {
-    const webhook = req.webhook;
-
-    if (!webhook) {
-      return res.status(404).json(errors.response_404.UNKNOWN_WEBHOOK);
-    }
-
-    const guild = await global.database.getGuildById(webhook.guild_id);
-
-    if (!guild) {
-      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-    }
-
-    const channel = await global.database.getChannelById(webhook.channel_id);
+    const webhook = req.webhook!!;
+    const channel = await ChannelService.getChannelById(webhook.channel_id);
 
     if (!channel) {
       return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
@@ -330,11 +282,11 @@ router.post('/:webhookid/:webhooktoken/github', async (req, res) => {
 
     const override_id = Snowflake.generate();
 
-    let embeds = [];
+    let embeds: Embed[] = [];
 
     if (req.body.commits && req.body.commits.length > 0) {
-      let commit_url = null;
-      let description = null;
+      let commit_url = "";
+      let description = "";
 
       if (req.body.commits.length == 1) {
         commit_url = `${req.body.repository.html_url}/commit/${req.body.commits[0].id}`;
@@ -376,15 +328,15 @@ router.post('/:webhookid/:webhooktoken/github', async (req, res) => {
       ];
     }
 
-    const createMessage = await global.database.createMessage(
+    const createMessage = await MessageService.createMessage(
       !channel.guild_id ? null : channel.guild_id,
       channel.id,
       'WEBHOOK_' + webhook.id + '_' + override_id,
       req.body.content,
       req.body.nonce,
-      null,
+      [],
       req.body.tts,
-      false,
+      { mention_everyone: false, mentions: [], mention_roles: [] },
       embeds,
     );
 
@@ -392,10 +344,10 @@ router.post('/:webhookid/:webhooktoken/github', async (req, res) => {
       return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
     }
 
-    const tryCreateOverride = await global.database.createWebhookOverride(
+    const tryCreateOverride = await WebhookService.createWebhookOverride(
       webhook.id,
       override_id,
-      override.username,
+      override.username ?? webhook.name ?? 'Captain Hook',
       override.avatar_url,
     );
 
@@ -406,7 +358,7 @@ router.post('/:webhookid/:webhooktoken/github', async (req, res) => {
     createMessage.author.username = override.username;
     createMessage.author.avatar = override.avatar_url;
 
-    await dispatcher.dispatchEventInChannel(guild, channel.id, 'MESSAGE_CREATE', createMessage);
+    await dispatcher.dispatchEventInChannel(webhook.guild_id, channel.id, 'MESSAGE_CREATE', createMessage);
 
     return res.status(204).send();
   } catch (error) {

@@ -1,23 +1,16 @@
 import { readFileSync } from 'fs';
 import { replaceAll } from './globalutils.ts';
 import { logText } from './logger.ts';
+import type { Account } from '../types/account.ts';
 
-// Interface for the configuration object
-interface EmailConfig {
-  enabled: boolean;
+export interface EmailConfig {
   fromAddress: string;
-  'brevo-api-key': string;
-  instance: {
-    name: string;
-  };
-  secure: boolean;
-  assets_cdn_url: string;
-}
-
-interface Account {
-  username: string;
-  discriminator: string | number;
-}
+  "brevo-api-key": string;
+  enabled: boolean;
+  max_per_timeframe: number;
+  timeframe_ms: number;
+  ratelimiter_modifier: number;
+};
 
 class Emailer {
   private max_per_timeframe: number;
@@ -31,15 +24,12 @@ class Emailer {
   private outNumberPerTF: number = 0;
 
   constructor(
-    config: EmailConfig,
-    max_per_timeframe: number,
-    timeframe_ms: number,
-    ratelimiter_modifier: number = 5
+    config: EmailConfig
   ) {
     this.config = config;
-    this.max_per_timeframe = max_per_timeframe;
-    this.timeframe_ms = timeframe_ms;
-    this.ratelimiter_modifier = ratelimiter_modifier;
+    this.max_per_timeframe = config.max_per_timeframe;
+    this.timeframe_ms = config.timeframe_ms;
+    this.ratelimiter_modifier = config.ratelimiter_modifier;
 
     setInterval(() => {
       if (this.ratelimited && this.ratelimitedWhen !== null) {
@@ -107,10 +97,10 @@ class Emailer {
     const replacements: Record<string, string> = {
       '[username]': account.username,
       '[discriminator]': String(account.discriminator),
-      '[instance]': (global as any).config.instance.name,
-      '[protocol]': (global as any).config.secure ? 'https' : 'http',
-      '[assets_cdn_url]': (global as any).config.assets_cdn_url || 'cdn.oldcordapp.com',
-      '[domain]': (global as any).full_url,
+      '[instance]': global.config.instance.name,
+      '[protocol]': global.config.secure ? 'https' : 'http',
+      '[assets_cdn_url]': global.config.assets_cdn_url || 'cdn.oldcordapp.com',
+      '[domain]': global.full_url,
       '[ffnum]': '2',
       '[email_token]': emailToken,
       '[fftext]': 'The bushes and clouds in the original Super Mario Bros are the same sprite recolored.',
@@ -149,7 +139,7 @@ class Emailer {
 
       return await this.trySendEmail(
         to,
-        `Password Reset Request for ${(global as any).config.instance.name}`,
+        `Password Reset Request for ${global.config.instance.name}`,
         htmlContent
       );
     } catch (error) {

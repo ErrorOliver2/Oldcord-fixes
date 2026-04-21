@@ -1,7 +1,7 @@
 .sidebar-container {
   display: flex;
   flex: 1 0 218px;
-  background: #2f3136;
+  background: #1c1c1c;
   z-index: 1;
 }
 

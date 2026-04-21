@@ -1,4 +1,7 @@
+import ctx from '../context.ts';
+import type { MRAnswer, MRHeartbeat, MRIdentify, MRSpeakingBatch, MRVideoBatch } from '../types/mediaRelay.ts';
 import ws from 'ws';
+import type WebSocket from 'ws';
 
 const { EventEmitter } = ws;
 
@@ -11,14 +14,12 @@ const OPCODES = {
   SPEAKING_BATCH: 'SPEAKING_BATCH',
   HEARTBEAT: 'HEARTBEAT',
   HEARTBEAT_ACK: 'HEARTBEAT_ACK',
-};
+}; //to-do move this to its own 
 
-async function handleIdentify(socket: any, packet: any) {
-  const public_ip = packet.d.public_ip;
-  const public_port = packet.d.public_port;
-  const timestamp = packet.d.timestamp;
+async function handleIdentify(socket: WebSocket, packet: MRIdentify) {
+  const { public_ip, public_port, timestamp } = packet.d;
 
-  global.mrServer.debug(`New media server has connected! Added to internal store.`);
+  ctx.mrServer?.debug(`New media server has connected! Added to internal store.`);
 
   //to-do find a proper & fast way to lookup these public ips to serve whats close to a user
 
@@ -26,9 +27,10 @@ async function handleIdentify(socket: any, packet: any) {
   socket.public_port = public_port;
   socket.emitter = new EventEmitter();
 
-  global.mrServer.servers.set(public_ip, {
+  ctx.mrServer?.servers.set(public_ip, {
     socket: socket,
     port: public_port,
+    public_ip: public_ip,
     seen_at: timestamp,
   });
 
@@ -36,33 +38,35 @@ async function handleIdentify(socket: any, packet: any) {
     JSON.stringify({
       op: OPCODES.ALRIGHT,
       d: {
-        location: global.mrServer.servers.size,
-        config: global.config.mr_server.config,
+        location: ctx.mrServer?.servers.size,
+        config: ctx.config?.mr_server.config,
       },
     }),
   );
 }
 
-async function handleHeartbeat(socket: any, packet: any) {
+async function handleHeartbeat(socket: WebSocket, packet: MRHeartbeat) {
   if (!socket.hb) return;
 
   socket.hb.acknowledge(packet.d);
   socket.hb.reset();
 }
 
-async function handleAnswer(socket: any, packet: any) {
+async function handleAnswer(socket: WebSocket, packet: MRAnswer) {
   socket.emitter.emit('answer-received', packet.d);
 }
 
-async function handleVideoBatch(socket: any, packet: any) {
+async function handleVideoBatch(socket: WebSocket, packet: MRVideoBatch) {
   socket.emitter.emit('video-batch', packet.d);
 }
 
-async function handleSpeakingBatch(socket: any, packet: any) {
+async function handleSpeakingBatch(socket: WebSocket, packet: MRSpeakingBatch) {
   socket.emitter.emit('speaking-batch', packet.d);
 }
 
-const mrHandlers = {
+type MrHandler = (socket: WebSocket, packet: any) => Promise<void> | void;
+
+const mrHandlers: Record<number, MrHandler> = {
   [OPCODES.IDENTIFY]: handleIdentify,
   [OPCODES.HEARTBEAT]: handleHeartbeat,
   [OPCODES.ANSWER]: handleAnswer,

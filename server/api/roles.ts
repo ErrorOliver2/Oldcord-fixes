@@ -1,22 +1,18 @@
 import { Router } from 'express';
 
-import dispatcher from '../helpers/dispatcher.js';
-import errors from '../helpers/errors.js';
-import globalUtils from '../helpers/globalutils.js';
+import dispatcher from '../helpers/dispatcher.ts';
+import errors from '../helpers/errors.ts';
+import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.js';
-import quickcache from '../helpers/quickcache.js';
-import Watchdog from '../helpers/watchdog.js';
+import { guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { RoleService } from './services/roleService.ts';
+import type { Request, Response } from "express";
+import type { User } from '../types/user.ts';
+import { prisma } from '../prisma.ts';
 
 const router = Router({ mergeParams: true });
 
-router.param('roleid', async (req, res, next, roleid) => {
-  req.role = req.guild.roles.find((x) => x.id === roleid);
-
-  next();
-});
-
-router.get('/:roleid', quickcache.cacheFor(60 * 15, true), async (req, res) => {
+router.get('/:roleid', async (req: Request, res: Response) => {
   return res.status(200).json(req.role);
 });
 
@@ -27,30 +23,16 @@ router.patch(
     global.config.ratelimit_config.updateRole.maxPerTimeFrame,
     global.config.ratelimit_config.updateRole.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.updateRole.maxPerTimeFrame,
-    global.config.ratelimit_config.updateRole.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
-
-      if (!guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
-      const roles = req.guild.roles;
+      const guild = req.guild!!;
+      const roles = guild.roles!!;
 
       if (roles.length == 0) {
         return res.status(404).json(errors.response_404.UNKNOWN_ROLE);
       }
 
-      const role = req.role;
-
-      if (role == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_ROLE);
-      }
+      const role = req.role!!;
 
       if (req.body.name != '@everyone' && req.params.roleid == req.params.guildid) {
         return res.status(403).json({
@@ -76,14 +58,14 @@ router.patch(
       role.name = req.body.name || 'new role';
       role.position = req.body.position ?? role.position;
 
-      const attempt = await global.database.updateRole(role);
+      const attempt = await RoleService.updateRole(role.id, role);
 
       if (attempt) {
         role.name = req.body.name;
         role.permissions = req.body.permissions ?? 0;
         role.position = req.body.position ?? role.position;
 
-        await dispatcher.dispatchEventInGuild(guild, 'GUILD_ROLE_UPDATE', {
+        await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_ROLE_UPDATE', {
           guild_id: guild.id,
           role: role,
         });
@@ -107,48 +89,33 @@ router.delete(
     global.config.ratelimit_config.deleteRole.maxPerTimeFrame,
     global.config.ratelimit_config.deleteRole.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.deleteRole.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteRole.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
+      const guild = req.guild!!;
+      const role = req.role!!;
 
-      if (!guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
-      const role = req.role;
-
-      if (role == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_ROLE);
-      }
-
-      const members_with_role = req.guild.members.filter((x) => x.roles.some((y) => y === role.id));
-
-      const attempt = await global.database.deleteRole(req.params.roleid);
+      const members_with_role = guild.members?.filter((x) => x.roles!!.some((y) => y === role.id));
+      const attempt = await RoleService.deleteRole(req.params.roleid as string);
 
       if (!attempt) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      await dispatcher.dispatchEventInGuild(req.guild, 'GUILD_ROLE_DELETE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_ROLE_DELETE', {
         guild_id: req.params.guildid,
         role_id: req.params.roleid,
       });
 
-      if (members_with_role.length > 0) {
-        for (var member_with_role of members_with_role) {
+      if (members_with_role!!.length > 0) {
+        for (var member_with_role of members_with_role!!) {
           let member_with_roles = member_with_role.roles;
 
-          member_with_roles = member_with_roles.filter((x) => x !== role.id);
+          member_with_roles = member_with_roles!!.filter((x) => x !== role.id);
 
-          await dispatcher.dispatchEventInGuild(req.guild, 'GUILD_MEMBER_UPDATE', {
+          await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_UPDATE', {
             roles: member_with_roles,
-            user: globalUtils.miniUserObject(member_with_role.user),
-            guild_id: req.guild.id,
+            user: globalUtils.miniUserObject(member_with_role!!.user as User),
+            guild_id: guild.id,
             nick: member_with_role.nick,
           });
         }
@@ -170,19 +137,9 @@ router.patch(
     global.config.ratelimit_config.updateRole.maxPerTimeFrame,
     global.config.ratelimit_config.createRole.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.createRole.maxPerTimeFrame,
-    global.config.ratelimit_config.createRole.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
-
-      if (!guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
+      const guild = req.guild!!;
       const roles = req.body;
 
       if (!Array.isArray(roles)) {
@@ -192,43 +149,38 @@ router.patch(
         });
       } //figure this one out
 
-      let success = 0;
-      const retRoles = [];
+      const updatedRoles = await prisma.$transaction(
+        roles.map((role) =>
+          prisma.role.update({
+            where: { role_id: role.id },
+            data: { position: role.position },
+            select: {
+                role_id: true, name: true, permissions: true, 
+                position: true, color: true, hoist: true, mentionable: true 
+            }
+          })
+        )
+      );
 
-      for (var role of roles) {
-        if (!role.id || !role.position) continue;
+      const formattedRoles = updatedRoles.map(r => ({
+          id: r.role_id,
+          name: r.name,
+          permissions: r.permissions,
+          position: r.position,
+          color: r.color,
+          hoist: r.hoist,
+          mentionable: r.mentionable
+      }));
 
-        if (Object.keys(role).length > 2) continue; //fuck you
 
-        const guildRole = guild.roles.find((x) => x.id === role.id);
+      await Promise.all(formattedRoles.map(role =>
+        dispatcher.dispatchEventInGuild(guild.id, 'GUILD_ROLE_UPDATE', {
+          guild_id: guild.id,
+          role: role
+        })
+      ));
 
-        if (!guildRole) continue;
-
-        const update_this_role = guildRole.position != role.position;
-
-        if (update_this_role) {
-          guildRole.position = role.position;
-
-          const tryUpdate = await global.database.updateRole(guildRole);
-
-          if (!tryUpdate) continue;
-
-          await dispatcher.dispatchEventInGuild(guild, 'GUILD_ROLE_UPDATE', {
-            guild_id: guild.id,
-            role: guildRole,
-          });
-        }
-
-        retRoles.push(guildRole);
-
-        success++;
-      }
-
-      if (success !== roles.length) {
-        return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
-      }
-
-      return res.status(200).json(retRoles);
+      return res.status(200).json(formattedRoles);
     } catch (error) {
       logText(error, 'error');
 
@@ -244,33 +196,24 @@ router.post(
     global.config.ratelimit_config.createRole.maxPerTimeFrame,
     global.config.ratelimit_config.createRole.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.createRole.maxPerTimeFrame,
-    global.config.ratelimit_config.createRole.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
+      const guild = req.guild!!;
 
-      if (!guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
-      if (guild.roles.length >= global.config.limits['roles_per_guild'].max) {
+      if (guild.roles!!.length >= global.config.limits['roles_per_guild'].max) {
         return res.status(400).json({
           code: 400,
           message: `Maximum number of roles per guild exceeded (${global.config.limits['roles_per_guild'].max})`,
         });
       }
 
-      const role = await global.database.createRole(req.params.guildid, 'new role', 1); //Make it appear at the bottom of the list
+      const role = await RoleService.createRole(req.params.guildid as string, 'new role', 1); //Make it appear at the bottom of the list
 
       if (role == null) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      await dispatcher.dispatchEventInGuild(guild, 'GUILD_ROLE_UPDATE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_ROLE_UPDATE', {
         guild_id: guild.id,
         role: role,
       });

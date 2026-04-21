@@ -1,6 +1,7 @@
 import { murmur3 } from 'murmurhash-js';
 import dispatcher from './dispatcher.ts';
 import globalUtils from './globalutils.ts';
+import { GuildService } from '../api/services/guildService.ts';
 
 const lazyRequest = {
   getSortedList: (guild: any): any => {
@@ -25,7 +26,7 @@ const lazyRequest = {
       return murmur3('', 0).toString();
     }
 
-    const READ_MESSAGES = global.permissions.toObject().READ_MESSAGES;
+    const READ_MESSAGES = permissions.toObject().READ_MESSAGES;
     const everyoneOverwrite = channel.permission_overwrites.find((ov) => ov.id === everyoneRole.id);
 
     let everyoneCanView: any = everyoneRole.permissions & READ_MESSAGES;
@@ -82,7 +83,7 @@ const lazyRequest = {
 
     const visibleMembers = guild.members.filter((m) => {
       return (
-        global.permissions.hasChannelPermissionTo(channel, guild, m.id, 'READ_MESSAGES') ||
+        permissions.hasChannelPermissionTo(channel, guild, m.id, 'READ_MESSAGES') ||
         bypassPerms
       );
     });
@@ -188,149 +189,6 @@ const lazyRequest = {
       }
     }
   },
-  handleMemberRemove: async (session: any, guild: any, memberId: string) => {
-    const guildSubs = session.subscriptions[guild.id];
-    if (!guildSubs) return;
-
-    const leaverSession = Array.from(global.sessions.values()).find((s: any) => s.user.id === memberId);
-    if (leaverSession) {
-      lazyRequest.clearGuildSubscriptions(leaverSession, guild.id);
-    }
-
-    for (const [channelId, subData] of Object.entries(guildSubs) as any[][]) {
-      const channel = guild.channels.find((x) => x.id === channelId);
-      if (!channel) continue;
-
-      const list_id = lazyRequest.getListId(
-        session,
-        guild,
-        channel,
-        guild.roles.find((x) => x.id === guild.id),
-      );
-      let ops: any = [];
-
-      const oldItems = session.memberListCache[channelId];
-      if (!oldItems) continue;
-
-      const tempGuild = { ...guild, members: guild.members.filter((m) => m.id !== memberId) };
-      const {
-        items: newItems,
-        groups,
-        count,
-      } = lazyRequest.computeMemberList(tempGuild, channel, subData.ranges);
-      const totalOnline = groups
-        .filter((g) => g.id !== 'offline')
-        .reduce((acc, g) => acc + g.count, 0);
-
-      if (global.config.sync_only) {
-        ops = subData.ranges.map((range) => ({
-          op: 'SYNC',
-          range: range,
-          items: newItems.slice(range[0], range[1] + 1),
-        }));
-      } else {
-        const visualIndex = oldItems.findIndex(
-          (i) => i.member && (i.member.id === memberId || i.member.user?.id === memberId),
-        );
-        if (visualIndex === -1) continue;
-
-        ops.push({ op: 'DELETE', index: visualIndex });
-
-        if (
-          visualIndex > 0 &&
-          oldItems[visualIndex - 1].group &&
-          oldItems[visualIndex - 1].group.count === 1
-        ) {
-          ops.push({ op: 'DELETE', index: visualIndex - 1 });
-        }
-      }
-
-      session.memberListCache[channelId] = newItems;
-
-      session.dispatch('GUILD_MEMBER_LIST_UPDATE', {
-        guild_id: guild.id,
-        id: list_id,
-        ops: ops,
-        groups: groups,
-        member_count: count,
-        online_count: totalOnline,
-      });
-    }
-
-    guild.members = guild.members.filter((m) => m.id !== memberId);
-  },
-  handleMemberAdd: async (session: any, guild: any, member: any) => {
-    const guildSubs = session.subscriptions[guild.id];
-    if (!guildSubs) return;
-
-    const memberId = member.id || member.user?.id;
-
-    if (!guild.members.find((m) => m.id === memberId)) {
-      guild.members.push(member);
-    }
-
-    for (const [channelId, subData] of Object.entries(guildSubs) as any[][]) {
-      const channel = guild.channels.find((x) => x.id === channelId);
-      if (!channel) continue;
-
-      const {
-        items: newItems,
-        groups,
-        count,
-      } = lazyRequest.computeMemberList(guild, channel, subData.ranges);
-      const list_id = lazyRequest.getListId(
-        session,
-        guild,
-        channel,
-        guild.roles.find((x) => x.id === guild.id),
-      );
-      const totalOnline = groups
-        .filter((g) => g.id !== 'offline')
-        .reduce((acc, g) => acc + g.count, 0);
-
-      let ops: any = [];
-
-      if (global.config.sync_only) {
-        ops = subData.ranges.map((range) => ({
-          op: 'SYNC',
-          range: range,
-          items: newItems.slice(range[0], range[1] + 1),
-        }));
-      } else {
-        const oldItems = session.memberListCache[channelId] || [];
-        const visualIndex = newItems.findIndex(
-          (i) => i.member && String(i.member.id || i.member.user?.id) === String(memberId),
-        );
-
-        if (visualIndex !== -1) {
-          if (visualIndex > 0 && newItems[visualIndex - 1].group) {
-            const newGroup = newItems[visualIndex - 1].group;
-            const oldGroupIdx = oldItems.findIndex((i) => i.group && i.group.id === newGroup.id);
-
-            if (oldGroupIdx === -1) {
-              ops.push({ op: 'INSERT', index: visualIndex - 1, item: newItems[visualIndex - 1] });
-            } else {
-              ops.push({ op: 'UPDATE', index: oldGroupIdx, item: newItems[visualIndex - 1] });
-            }
-          }
-          ops.push({ op: 'INSERT', index: visualIndex, item: newItems[visualIndex] });
-        }
-      }
-
-      session.memberListCache[channelId] = newItems;
-
-      if (ops.length > 0) {
-        session.dispatch('GUILD_MEMBER_LIST_UPDATE', {
-          guild_id: guild.id,
-          id: list_id,
-          ops: ops,
-          groups: groups,
-          member_count: count,
-          online_count: totalOnline,
-        });
-      }
-    }
-  },
   handleMembersSync: (session: any, channel: any, guild: any, subData: any) => {
     if (!subData || !subData.ranges) return;
 
@@ -368,7 +226,7 @@ const lazyRequest = {
   },
   syncMemberList: async (guild: any, user_id: string) => {
     await dispatcher.dispatchEventInGuildToThoseSubscribedTo(
-      guild,
+      guild.id,
       'LIST_RELOAD',
       async function (this: any) {
         const otherSession = this;
@@ -477,7 +335,7 @@ const lazyRequest = {
 
     if (!guild_id || !channels) return;
 
-    const guild = socket.session.guilds.find((x) => x.id === guild_id);
+    const guild = await GuildService.getById(guild_id);
 
     if (!guild) return;
 
@@ -486,7 +344,7 @@ const lazyRequest = {
     }
 
     for (const [channelId, ranges] of Object.entries(channels)) {
-      const channel = guild.channels.find((x) => x.id === channelId);
+      const channel = guild.channels?.find((x) => x.id === channelId);
 
       if (!channel) continue;
 
@@ -495,8 +353,9 @@ const lazyRequest = {
       };
 
       if (Array.isArray(memberIds)) {
-        memberIds.forEach((id) => {
-          const presence = globalUtils.getGuildPresences(guild).find((p) => p.user.id === id); //cant trust guild.presences
+        memberIds.forEach(async (id) => {
+          const presences = await globalUtils.getGuildPresences(guild.id);
+          const presence = presences.find((p) => p.user.id === id); //cant trust guild.presences
 
           if (presence) {
             socket.session.dispatch('PRESENCE_UPDATE', {
@@ -519,8 +378,6 @@ export const {
   getListId,
   computeMemberList,
   clearGuildSubscriptions,
-  handleMemberRemove,
-  handleMemberAdd,
   handleMembersSync,
   syncMemberList,
   fire,

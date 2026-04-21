@@ -1,5 +1,5 @@
 .changelog-container {
-  background-color: #36393f;
+  background-color: var(--background-secondary);
   color: #b9bbbe !important;
   padding: 0 0 20px;
 }

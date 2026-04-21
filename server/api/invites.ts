@@ -3,35 +3,17 @@ import { Router } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
-import lazyRequest from '../helpers/lazyRequest.ts';
 import { logText } from '../helpers/logger.ts';
 import { instanceMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
-import quickcache from '../helpers/quickcache.ts';
-import Watchdog from '../helpers/watchdog.ts';
-import type { NextFunction, Response } from "express";
+import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
+import { MessageService } from './services/messageService.ts';
+import { PublicService } from './services/publicService.ts';
 
 const router = Router({ mergeParams: true });
 
-router.param('code', async (req: any, _res: Response, next: NextFunction, _memberid: string) => {
-  req.invite = await global.database.getInvite(req.params.code); //to-do prisma migration
-
-  if (!req.guild && req.invite && req.invite.channel.guild_id) {
-    req.guild = await prisma.guild.findUnique({
-        where: {
-          id: req.invite.channel.guild_id
-        },
-        include: {
-          members: true
-        }
-      });
-  }
-
-  next();
-});
-
 //We wont cache stuff like this for everyone because if theyre banned we want the invite to be invalid only for them.
-router.get('/:code', quickcache.cacheFor(60 * 30), async (req: any, res: Response) => {
+router.get('/:code', async (req: Request, res: Response) => {
   try {
     const invite = req.invite;
 
@@ -53,33 +35,18 @@ router.delete(
     global.config.ratelimit_config.deleteInvite.maxPerTimeFrame,
     global.config.ratelimit_config.deleteInvite.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.deleteInvite.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteInvite.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const sender = req.account;
-      const invite = req.invite;
-
-      if (invite == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_INVITE);
-      }
-
-      const channel = req.guild.channels.find((x) => x.id === invite.channel.id);
+      const sender = req.account!!;
+      const invite = req.invite!!;
+      const guild = req.guild!!;
+      const channel = guild.channels?.find((x) => x.id === invite.channel?.id);
 
       if (channel == null) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const guild = req.guild;
-
-      if (guild == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
-
-      const hasPermission = global.permissions.hasChannelPermissionTo(
+      const hasPermission = permissions.hasChannelPermissionTo(
         channel,
         guild,
         sender.id,
@@ -92,7 +59,7 @@ router.delete(
 
       await prisma.invite.delete({
         where: {
-          code: req.params.code
+          code: req.params.code as string
         }
       });
 
@@ -112,30 +79,17 @@ router.post(
     global.config.ratelimit_config.useInvite.maxPerTimeFrame,
     global.config.ratelimit_config.useInvite.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.useInvite.maxPerTimeFrame,
-    global.config.ratelimit_config.useInvite.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const sender = req.account;
+      const sender = req.account!!;
 
       if (sender.bot) {
         return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
       }
 
-      const invite = req.invite;
+      const invite = req.invite!!;
 
-      if (invite == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_INVITE);
-      }
-
-      let guild = req.guild;
-
-      if (guild == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-      }
+      let guild = req.guild!!;
 
       const usersGuild = await prisma.guild.count({
         where: {
@@ -156,13 +110,13 @@ router.post(
 
       let joinAttempt = true;
 
-      const member = guild.members.find((x) => x.id === sender.id);
+      const member = guild.members?.find((x) => x.id === sender.id);
 
       if (member != null) {
         joinAttempt = false;
       }
 
-      if (req.invite.max_uses && req.invite.max_uses != 0 && req.invite.uses >= req.invite.max_uses) {
+      if (invite.max_uses && invite.max_uses != 0 && invite.uses!! >= invite.max_uses) {
         await prisma.invite.delete({
           where: {
             code: invite.code
@@ -186,7 +140,7 @@ router.post(
       await prisma.member.create({
         data: {
           user_id: sender.id,
-          guild_id: req.guild.id,
+          guild_id: guild.id,
           joined_at: new Date().toISOString(),
           roles: [],
           nick: null,
@@ -195,14 +149,14 @@ router.post(
         }
       });
 
-      req.invite.uses++;
+      invite.uses!!++;
 
       await prisma.invite.update({
         where: {
-          code: req.invite.code
+          code: invite.code
         },
         data: {
-          uses: req.invite.uses
+          uses: invite.uses
         }
       });
 
@@ -210,54 +164,28 @@ router.post(
         return res.status(404).json(errors.response_404.UNKNOWN_INVITE);
       }
 
-      guild = await prisma.guild.findUnique({
-        where: {
-          id: guild.id
-        },
-        include: {
-          members: true
-        }
-      }); //update to keep in sync?
+      await dispatcher.dispatchEventTo(sender.id, 'GUILD_CREATE', PublicService.convertGuild(guild));
 
-      await dispatcher.dispatchEventTo(sender.id, 'GUILD_CREATE', guild.toPublic());
-
-      await dispatcher.dispatchEventInGuild(guild, 'GUILD_MEMBER_ADD', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_ADD', {
         roles: [],
         user: globalUtils.miniUserObject(sender),
-        guild_id: invite.guild.id,
+        guild_id: invite!!.guild!!.id,
         joined_at: new Date().toISOString(),
         deaf: false,
         mute: false,
         nick: null,
       });
 
-      const activeSessions = dispatcher.getAllActiveSessions();
-
-      for (const session of activeSessions) {
-        if (session.subscriptions && session.subscriptions[guild.id]) {
-          //if (session.user.id === sender.id) continue;
-
-          await lazyRequest.handleMemberAdd(session, guild, {
-            roles: [],
-            user: globalUtils.miniUserObject(sender),
-            joined_at: new Date().toISOString(),
-            deaf: false,
-            mute: false,
-            nick: null,
-          });
-        }
-      }
-
-      await dispatcher.dispatchEventInGuild(guild, 'PRESENCE_UPDATE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'PRESENCE_UPDATE', {
         ...globalUtils.getUserPresence({
           user: globalUtils.miniUserObject(sender),
         }),
         roles: [],
-        guild_id: invite.guild.id,
+        guild_id: invite!!.guild!!.id,
       });
 
       if (guild.system_channel_id != null) {
-        const join_msg = await globalUtils.createSystemMessage(
+        const join_msg = await MessageService.createSystemMessage(
           guild.id,
           guild.system_channel_id,
           7,
@@ -265,7 +193,7 @@ router.post(
         );
 
         await dispatcher.dispatchEventInChannel(
-          guild,
+          guild.id,
           guild.system_channel_id,
           'MESSAGE_CREATE',
           function (socket) {

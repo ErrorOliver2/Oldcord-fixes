@@ -14,3 +14,11 @@ interface JSON {
 interface SyntaxError {
   status: number;
 }
+
+declare global {
+  var config: {
+    captcha_config?: {
+      secret_key: string;
+    };
+  };
+}

@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 
 import { response_500 } from '../helpers/errors.js';
 import { logText } from '../helpers/logger.ts';
+
 const router = Router();
 
 router.get('/', async (_req: Request, res: Response) => {

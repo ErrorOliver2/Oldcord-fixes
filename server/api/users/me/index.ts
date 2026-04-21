@@ -3,13 +3,11 @@ import { Router } from 'express';
 import globalUtils, { generateString } from '../../../helpers/globalutils.ts';
 import { logText } from '../../../helpers/logger.ts';
 import { rateLimitMiddleware } from '../../../helpers/middlewares.ts';
-import type { NextFunction, Response } from "express";
+import type { Request, Response } from "express";
 
 const router = Router();
 import dispatcher from '../../../helpers/dispatcher.ts';
 import errors from '../../../helpers/errors.ts';
-import quickcache from '../../../helpers/quickcache.ts';
-import Watchdog from '../../../helpers/watchdog.ts';
 import relationships from '../relationships.js';
 import billing from './billing.ts';
 import connections from './connections.ts';
@@ -19,41 +17,17 @@ import md5 from '../../../helpers/md5.ts';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { totp } from 'speakeasy';
 import { compareSync } from 'bcrypt';
+import { MessageService } from '../../../api/services/messageService.ts'
+import { AccountService } from '../../../api/services/accountService.ts';
+import type { Account } from '../../../types/account.ts';
 
 router.use('/relationships', relationships);
-
-router.param('userid', async (req: any, _res: Response, next: NextFunction, userid: string) => {
-  req.user = await prisma.user.findUnique({
-    where: {
-      id: userid,
-    },
-    include: {
-      staff: true,
-    }
-  });
-
-  next();
-});
-
-router.param('guildid', async (req: any, _res: Response, next: NextFunction, guildid: string) => {
-  req.guild = await prisma.guild.findUnique({
-    where: {
-      id: guildid
-    },
-    include: {
-      members: true
-    }
-  });
-
-  next();
-});
-
 router.use('/connections', connections);
 router.use('/guilds', guilds);
 router.use('/billing', billing);
 
 //Or this
-router.get('/', quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
     return res
       .status(200)
@@ -80,14 +54,9 @@ router.patch(
     global.config.ratelimit_config.updateMe.maxPerTimeFrame,
     global.config.ratelimit_config.updateMe.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.updateMe.maxPerTimeFrame,
-    global.config.ratelimit_config.updateMe.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      let account = req.account;
+      let account = req.account!!;
       const originalAcc = account;
 
       if (account.bot) {
@@ -203,6 +172,7 @@ router.patch(
         }
       }
 
+      //Figure out how to do this
       if (account.password) {
         if (req.body.new_password) {
           update.new_password = req.body.new_password;
@@ -350,7 +320,7 @@ router.patch(
       }
 
       if (update.password) {
-        const correctPassword = compareSync(update.password, account.password);
+        const correctPassword = compareSync(update.password, account.password as string);
 
         if (!correctPassword) {
           return res.status(400).json({
@@ -394,15 +364,13 @@ router.patch(
         }
       }
 
-      account = await prisma.user.findUnique({
-        where: {
-          id: account.id
-        }
-      });
+      let new_account = await AccountService.getById(account.id);
 
-      if (!account) {
+      if (!new_account) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
+
+      account = new_account as Account;
 
       account = globalUtils.sanitizeObject(account, [
         'settings',
@@ -460,9 +428,11 @@ router.patch(
 ); //someone PLEASE clean this up SOMEHOW
 
 //Or this
-router.get('/settings', quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
+router.get('/settings', async (req: Request, res: Response) => {
   try {
-    return res.status(200).json(req.account.settings);
+    const account = req.account!!;
+
+    return res.status(200).json(account.settings);
   } catch (error) {
     logText(error, 'error');
 
@@ -470,9 +440,9 @@ router.get('/settings', quickcache.cacheFor(60 * 5), async (req: any, res: Respo
   }
 });
 
-router.patch('/settings', async (req: any, res: Response) => {
+router.patch('/settings', async (req: Request, res: Response) => {
   try {
-    const account = req.account;
+    const account = req.account!!;
     const new_settings = account.settings;
 
     if (new_settings == null) {
@@ -488,7 +458,7 @@ router.patch('/settings', async (req: any, res: Response) => {
         id: account.id
       },
       data: {
-        settings: new_settings
+        settings: new_settings as any
       }
     });
 
@@ -509,7 +479,6 @@ router.patch('/settings', async (req: any, res: Response) => {
     }
 
     return res.status(204).send();
-
   } catch (error) {
     logText(error, 'error');
 
@@ -517,14 +486,8 @@ router.patch('/settings', async (req: any, res: Response) => {
   }
 });
 
-router.get(/\/settings-proto\/.*/, async (req: any, res: Response) => {
+router.get(/\/settings-proto\/.*/, async (_req: Request, res: Response) => {
   try {
-    const account = req.account;
-
-    if (!account) {
-      return res.status(401).json(errors.response_401.UNAUTHORIZED);
-    }
-
     return res.status(200).json({
       settings: {
         versions: {
@@ -551,14 +514,8 @@ router.get(/\/settings-proto\/.*/, async (req: any, res: Response) => {
   }
 });
 
-router.patch(/\/settings-proto\/.*/, async (req: any, res: Response) => {
+router.patch(/\/settings-proto\/.*/, async (_req: Request, res: Response) => {
   try {
-    const account = req.account;
-
-    if (!account) {
-      return res.status(401).json(errors.response_401.UNAUTHORIZED);
-    }
-
     return res.status(403).json({
       code: 403,
       message:
@@ -571,14 +528,10 @@ router.patch(/\/settings-proto\/.*/, async (req: any, res: Response) => {
   }
 });
 
-router.put('/notes/:userid', async (req: any, res: Response) => {
+router.put('/notes/:userid', async (req: Request, res: Response) => {
   try {
-    const account = req.account;
-    const user = req.user;
-
-    if (!user) {
-      return res.status(404).json(errors.response_404.UNKNOWN_USER);
-    }
+    const account = req.account!!;
+    const user = req.user!!;
 
     const noteInput = req.body.note;
     const new_notes = (noteInput && noteInput.trim().length > 0) ? noteInput : null;
@@ -622,27 +575,26 @@ router.put('/notes/:userid', async (req: any, res: Response) => {
 
 //Leaving guilds in late 2016
 
-router.get('/mentions', quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
+router.get('/mentions', async (req: Request, res: Response) => {
   try {
-    const account = req.account;
-    const limit = req.query.limit ?? 25;
-    const guild_id = req.query.guild_id ?? null;
+    const account = req.account!!;
+    const limit = parseInt(req.query.limit as string) ?? 25;
+    const guild_id = req.query.guild_id;
     const include_roles = (req.query.roles ?? "") === 'true';
     const include_everyone_mentions = req.query.everyone !== 'false';
-    const before = req.query.before ?? null;
+    const before = req.query.before;
 
     if (!guild_id) {
       return res.status(200).json([]); //wtf why does this crash?
     }
 
-    //to-do move this function to use prisma
-    const recentMentions = await global.database.getRecentMentions(
+    const recentMentions = await MessageService.getRecentMentions(
       account.id,
-      before,
+      before ? before as string : undefined,
       limit,
       include_roles,
       include_everyone_mentions,
-      guild_id,
+      guild_id ? guild_id as string : undefined,
     );
 
     return res.status(200).json(recentMentions);
@@ -653,19 +605,19 @@ router.get('/mentions', quickcache.cacheFor(60 * 5), async (req: any, res: Respo
   }
 });
 
-router.get('/activities', (_req: any, res: Response) => {
+router.get('/activities', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/applications/:applicationid/entitlements', (_req: any, res: Response) => {
+router.get('/applications/:applicationid/entitlements', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/activities/statistics/applications', (_req: any, res: Response) => {
+router.get('/activities/statistics/applications', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/library', (_req: any, res: Response) => {
+router.get('/library', (_req: Request, res: Response) => {
   return res.status(200).json([
     {
       id: '1279311572212178955',
@@ -674,26 +626,26 @@ router.get('/library', (_req: any, res: Response) => {
   ]);
 });
 
-router.get('/feed', (_req: any, res: Response) => {
+router.get('/feed', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/feed/settings', (_req: any, res: Response) => {
+router.get('/feed/settings', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/entitlements/gifts', (_req: any, res: Response) => {
+router.get('/entitlements/gifts', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/affinities/users', (_req: any, res: Response) => {
+router.get('/affinities/users', (_req: Request, res: Response) => {
   return res.status(200).json({
     user_affinities: [],
     inverse_user_affinities: [],
   });
 });
 
-router.get('/affinities/guilds', (_req: any, res: Response) => {
+router.get('/affinities/guilds', (_req: Request, res: Response) => {
   return res.status(200).json({
     guild_affinities: [],
   });
@@ -705,15 +657,11 @@ router.post(
     global.config.ratelimit_config.registration.maxPerTimeFrame,
     global.config.ratelimit_config.registration.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
-    1,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const code = req.body.code;
       const secret = req.body.secret;
+      const account = req.account!!;
 
       if (!code || !secret) {
         return res.status(400).json({
@@ -724,7 +672,7 @@ router.post(
   
       let user_mfa: any = await prisma.user.findUnique({
         where: {
-          id: req.account.id,
+          id: account.id,
         },
         select: {
           mfa_enabled: true,
@@ -758,7 +706,7 @@ router.post(
 
       await prisma.user.update({
         where: {
-          id: req.account.id
+          id: account.id
         },
         data: {
           mfa_enabled: true,
@@ -766,7 +714,7 @@ router.post(
         }
       });
 
-      const returnedObj = globalUtils.sanitizeObject(req.account, [
+      const returnedObj = globalUtils.sanitizeObject(account, [
         'settings',
         'token',
         'password',
@@ -778,7 +726,7 @@ router.post(
 
       returnedObj.mfa_enabled = true;
 
-      await dispatcher.dispatchEventTo(req.account.id, 'USER_UPDATE', returnedObj);
+      await dispatcher.dispatchEventTo(account.id, 'USER_UPDATE', returnedObj);
 
       return res.status(200).json({
         token: req.headers['authorization'],
@@ -803,14 +751,10 @@ router.post(
     global.config.ratelimit_config.registration.maxPerTimeFrame,
     global.config.ratelimit_config.registration.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
-    1,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const code = req.body.code;
+      const account = req.account!!;
 
       if (!code) {
         return res.status(400).json({
@@ -821,7 +765,7 @@ router.post(
 
       let user_mfa: any = await prisma.user.findUnique({
         where: {
-          id: req.account.id,
+          id: account.id,
         },
         select: {
           mfa_enabled: true,
@@ -855,7 +799,7 @@ router.post(
 
       await prisma.user.update({
         where: {
-          id: req.account.id
+          id: account.id
         },
         data: {
           mfa_enabled: false,
@@ -863,7 +807,7 @@ router.post(
         }
       });
 
-      const returnedObj = globalUtils.sanitizeObject(req.account, [
+      const returnedObj = globalUtils.sanitizeObject(account, [
         'settings',
         'token',
         'password',
@@ -875,7 +819,7 @@ router.post(
 
       returnedObj.mfa_enabled = false;
 
-      await dispatcher.dispatchEventTo(req.account.id, 'USER_UPDATE', returnedObj);
+      await dispatcher.dispatchEventTo(account.id, 'USER_UPDATE', returnedObj);
 
       return res.status(200).json(returnedObj);
     } catch (error) {

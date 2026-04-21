@@ -4,15 +4,15 @@ import dispatcher from '../../../helpers/dispatcher.ts';
 import errors from '../../../helpers/errors.ts';
 import globalUtils from '../../../helpers/globalutils.ts';
 import { logText } from '../../../helpers/logger.ts';
-import quickcache from '../../../helpers/quickcache.ts';
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { prisma } from '../../../prisma.ts';
+import { cacheForMiddleware } from '../../../helpers/middlewares.ts';
 
 const router = Router();
 
-router.get('/', quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
+router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const account = req.account;
+    const account = req.account!!;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
@@ -40,9 +40,9 @@ router.get('/', quickcache.cacheFor(60 * 5), async (req: any, res: Response) => 
   }
 });
 
-router.delete('/:platform/:connectionid', async (req: any, res: Response) => {
+router.delete('/:platform/:connectionid', async (req: Request, res: Response) => {
   try {
-    const { account } = req;
+    const account = req.account!!;
     const { platform, connectionid } = req.params;
 
     if (account.bot) {
@@ -59,10 +59,11 @@ router.delete('/:platform/:connectionid', async (req: any, res: Response) => {
     }
 
     try {
+      //Move to account service somewhere
       const deleteResult = await prisma.connectedAccount.deleteMany({
         where: {
-          account_id: connectionid,
-          platform: platform,
+          account_id: connectionid as string,
+          platform: platform as string,
           user_id: account.id
         },
       });
@@ -105,9 +106,9 @@ router.delete('/:platform/:connectionid', async (req: any, res: Response) => {
   }
 });
 
-router.patch('/:platform/:connectionid', async (req: any, res: Response) => {
+router.patch('/:platform/:connectionid', async (req: Request, res: Response) => {
   try {
-    const { account } = req;
+    const account = req.account!!;
     const { platform, connectionid } = req.params;
     const { visibility } = req.body;
 
@@ -126,8 +127,8 @@ router.patch('/:platform/:connectionid', async (req: any, res: Response) => {
 
     const updateResult = await prisma.connectedAccount.updateMany({
       where: {
-        account_id: connectionid,
-        platform: platform,
+        account_id: connectionid as string,
+        platform: platform as string,
         user_id: account.id,
       },
       data: {

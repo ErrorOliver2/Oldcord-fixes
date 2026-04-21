@@ -4,22 +4,26 @@ import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import Twitch from '../helpers/integrations/twitch.ts';
+import { AccountService } from './services/accountService.ts';
+import { prisma } from '../prisma.ts';
 
 const router = Router({ mergeParams: true });
 const integrationConfig = globalUtils.config.integration_config;
 
 export interface PendingCallback {
-  token: any;
-  platform: any;
+  token: string;
+  platform: string;
   user_agent: string;
   release_date: string;
 };
 
+//to-do move to use a service
+
 let pendingCallback: PendingCallback[] = [];
 
 router.get('/:platform/authorize', async (req: Request, res: Response) => {
-  const token = req.query.token;
-  const platform = req.params.platform;
+  const token = req.query.token as string;
+  const platform = req.params.platform as string;
 
   if (!token) {
     return res.status(401).json(errors.response_401.UNAUTHORIZED);
@@ -38,17 +42,17 @@ router.get('/:platform/authorize', async (req: Request, res: Response) => {
     token: token,
     platform: platform,
     user_agent: req.headers['user-agent'] || 'unknown',
-    release_date: (req as any).client_build || 'unknown',
+    release_date: req.client_build || 'unknown',
   });
 
   return res.redirect(
-    `https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${checkPlatform.client_id}&redirect_uri=${encodeURI(checkPlatform.redirect_uri)}&scope=channel_subscriptions+channel_check_subscription+channel%3Aread%3Asubscriptions&state=3ebc725b6bf7dfd21f353c5e8f91c212`,
+    `https://id.twitch.tv/oauth2/authorize?response_type=code&client_id=${checkPlatform.client_id}&redirect_uri=${encodeURI(checkPlatform.redirect_uri!!)}&scope=channel_subscriptions+channel_check_subscription+channel%3Aread%3Asubscriptions&state=3ebc725b6bf7dfd21f353c5e8f91c212`,
   );
 });
 
 router.get('/:platform/callback', async (req: Request, res: Response) => {
   const code = req.query.code as string;
-  const platform = req.params.platform;
+  const platform = req.params.platform as string;
   //let state = req.params.state;
   const pending = pendingCallback.find(
     (x) => x.user_agent == req.headers['user-agent'] && x.release_date == req.client_build,
@@ -64,7 +68,7 @@ router.get('/:platform/callback', async (req: Request, res: Response) => {
     return res.status(401).json(errors.response_401.UNAUTHORIZED);
   }
 
-  const account = await global.database.getAccountByToken(token);
+  const account = await AccountService.getByToken(token);
 
   if (!account) {
     return res.status(401).json(errors.response_401.UNAUTHORIZED);
@@ -85,7 +89,6 @@ router.get('/:platform/callback', async (req: Request, res: Response) => {
   }
 
   const twitch = new Twitch(code);
-
   const access_token = await twitch.getAccessToken();
 
   if (access_token == null) {
@@ -104,19 +107,25 @@ router.get('/:platform/callback', async (req: Request, res: Response) => {
     });
   }
 
-  const attemptAddConnection = await global.database.addConnectedAccount(
-    account.id,
-    platform,
-    user.id,
-    user.login,
-  );
-
-  if (!attemptAddConnection) {
-    return res.status(400).json({
-      code: 400,
-      message: 'Something went wrong while connecting your account. Try again later.',
-    });
-  }
+  await prisma.connectedAccount.upsert({
+    where: {
+      user_id_platform: {
+        user_id: account.id,
+        platform: platform.toString()
+      }
+    },
+   update: {
+      username: user.login,
+      account_id: user.id, 
+    },
+    create: {
+      user_id: account.id,
+      account_id: user.id,
+      username: user.login,
+      platform: platform.toString(),
+      connected_at: new Date().toISOString()
+    }
+  });
 
   pendingCallback = pendingCallback.filter((x) => x !== pending);
 

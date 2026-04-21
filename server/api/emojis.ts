@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Request, Response } from "express";
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 
 import globalUtils from '../helpers/globalutils.ts';
@@ -8,18 +9,17 @@ import Snowflake from '../helpers/snowflake.ts';
 const router = Router({ mergeParams: true });
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
-import quickcache from '../helpers/quickcache.ts';
-import type { Response } from "express";
 import { prisma } from '../prisma.ts';
+
+//to-do move to use a service
 
 router.get(
   '/',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
-  quickcache.cacheFor(60 * 5, true),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
+      const guild = req.guild!!;
       const emojis = guild.emojis;
 
       return res.status(200).json(emojis);
@@ -31,12 +31,12 @@ router.get(
   },
 );
 
-router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: any, res: Response) => {
+router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Request, res: Response) => {
   try {
-    const account = req.account;
-    const guild = req.guild;
+    const account = req.account!!;
+    const guild = req.guild!!;
 
-    if (guild.emojis.length >= global.config.limits['emojis_per_guild'].max) {
+    if (guild.emojis!!.length >= global.config.limits['emojis_per_guild'].max) {
       return res.status(404).json({
         code: 404,
         message: `Maximum emojis per guild exceeded (${global.config.limits['emojis_per_guild'].max})`,
@@ -76,7 +76,7 @@ router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), a
 
     writeFileSync(filePath, imageBuffer);
 
-     const custom_emojis = guild.emojis;
+     const custom_emojis = guild.emojis!!;
 
     custom_emojis.push({
       id: emoji_id,
@@ -86,7 +86,7 @@ router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), a
     
     const updatedGuild = await prisma.guild.update({
       where: { id: guild.id },
-      data: { custom_emojis: custom_emojis }
+      data: { custom_emojis: custom_emojis as any }
     });
 
     const currentEmojis: any = updatedGuild.custom_emojis;
@@ -98,7 +98,7 @@ router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), a
       emoji.allNamesString = `:${emoji.name}:`;
     }
 
-    await dispatcher.dispatchEventInGuild(guild, 'GUILD_EMOJIS_UPDATE', {
+    await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_EMOJIS_UPDATE', {
       guild_id: guild.id,
       emojis: currentEmojis,
       guild_hashes: {
@@ -139,11 +139,11 @@ router.patch(
   '/:emoji',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
-      const emoji_id = req.params.emoji;
-      const emoji = req.guild.emojis.find((x) => x.id === emoji_id);
+      const guild = req.guild!!;
+      const emoji_id = req.params.emoji as string;
+      const emoji = guild.emojis!!.find((x) => x.id === emoji_id);
 
       if (emoji == null) {
         return res.status(404).json(errors.response_404.UNKNOWN_EMOJI);
@@ -166,7 +166,7 @@ router.patch(
         });
       }
 
-      const emojis = guild.custom_emojis as any[]; 
+      const emojis = guild.emojis!!; 
       const customEmoji = emojis.find((x) => x.id === emoji_id);
 
       if (!customEmoji) {
@@ -180,7 +180,7 @@ router.patch(
           id: guild.id
         },
         data: {
-          custom_emojis: emojis
+          custom_emojis: emojis as any
         }
       });
 
@@ -199,7 +199,7 @@ router.patch(
         emoji2.allNamesString = `:${emoji.name}:`;
       }
 
-      await dispatcher.dispatchEventInGuild(guild, 'GUILD_EMOJIS_UPDATE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_EMOJIS_UPDATE', {
         guild_id: guild.id,
         emojis: currentEmojis,
         guild_hashes: {
@@ -232,11 +232,11 @@ router.delete(
   '/:emoji',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
+      const guild = req.guild!!;
       const emoji_id = req.params.emoji;
-      const emojis = (guild.custom_emojis as any[]) || [];
+      const emojis = guild.emojis!!;
       const emojiExists = emojis.some((x) => x.id === emoji_id);
 
       if (!emojiExists) {
@@ -248,7 +248,7 @@ router.delete(
       const updatedGuild = await prisma.guild.update({
         where: { id: guild.id },
         data: {
-          custom_emojis: filteredEmojis
+          custom_emojis: filteredEmojis as any
         }
       });
 
@@ -260,7 +260,7 @@ router.delete(
         allNamesString: `:${e.name}:`,
       }));
 
-      await dispatcher.dispatchEventInGuild(guild, 'GUILD_EMOJIS_UPDATE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_EMOJIS_UPDATE', {
         guild_id: guild.id,
         emojis: currentEmojis,
         guild_hashes: {

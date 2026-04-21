@@ -1,4 +1,4 @@
-import { Router, type NextFunction } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type { Prisma } from '../generated/prisma/client/client.ts';
 
 import { logText } from '../helpers/logger.ts';
@@ -12,36 +12,18 @@ import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { prisma } from '../prisma.ts';
 import { deconstruct, generate } from '../helpers/snowflake.ts';
-//PRIVILEGE: 1 - (JANITOR) [Can only flag things for review], 2 - (MODERATOR) [Can only delete messages, mute users, and flag things for review], 3 - (ADMIN) [Free reign, can review flags, disable users, delete servers, etc], 4 - (INSTANCE OWNER) - [Can add new admins, manage staff, etc]
+import type { User } from '../types/user.ts';
+import { GuildService } from './services/guildService.ts';
+import type { Account } from '../types/account.ts';
+import { StaffPrivilegeLevel, type StaffAuditLogEntry } from '../types/staff.ts';
+import ctx from '../context.ts';
 
-interface PublicAccount {
-  id: string;
-  username: string;
-  email: string;
+/**
+ * GET /users/:userid
+ * Admin-level user lookup including their guilds and owned bots.
+ */
 
-  staff_details?: unknown;
-  needs_mfa: boolean;
-}
-
-router.param('userid', async (req: any, _res: any, next: NextFunction, userid: string) => {
-  req.user = await prisma.user.findUnique({
-    where: {
-      id: userid,
-    },
-    include: {
-      staff: true,
-    },
-  } as any);
-
-  req.is_user_staff = req.user && (req.user.flags & (1 << 0)) === 1 << 0;
-
-  if (req.user != null && req.is_user_staff)
-    req.user_staff_details = req.user.staff;
-
-  next();
-});
-
-router.get('/users/:userid', staffAccessMiddleware(3), async (req: any, res: any) => {
+router.get('/users/:userid', staffAccessMiddleware(3), async (req: Request, res: Response) => {
   try {
     const userid = req.params.userid;
 
@@ -51,7 +33,7 @@ router.get('/users/:userid', staffAccessMiddleware(3), async (req: any, res: any
 
     const [userRet, guilds] = await Promise.all([
       prisma.user.findUnique({
-        where: { id: userid },
+        where: { id: userid as string },
         select: {
             id: true,
             username: true,
@@ -65,8 +47,6 @@ router.get('/users/:userid', staffAccessMiddleware(3), async (req: any, res: any
             avatar: true,
             bot: true,
             flags: true,
-            registration_ip: true,
-            last_login_ip: true,
             private_channels: true,
             guild_settings: true,
          }
@@ -124,7 +104,7 @@ router.get('/users/:userid', staffAccessMiddleware(3), async (req: any, res: any
         redirect_uris: [],
         rpc_application_state: 0,
         rpc_origins: [],
-        owner: bot.application?.owner?.toPublic()
+        owner: globalUtils.miniUserObject(bot.application?.owner)
       },
     }));
 
@@ -166,7 +146,12 @@ type ApplicationWithOwner = Prisma.ApplicationGetPayload<{
   };
 }>;
 
-router.get('/bots/:userid', staffAccessMiddleware(3), async (req: any, res: any) => {
+/**
+ * GET /guilds/:guildid
+ * Optimized guild lookup with owner details.
+ */
+
+router.get('/bots/:userid', staffAccessMiddleware(3), async (req: Request, res: Response) => {
   try {
     const userid = req.params.userid;
 
@@ -183,7 +168,7 @@ router.get('/bots/:userid', staffAccessMiddleware(3), async (req: any, res: any)
     }>[]] = await Promise.all([
       prisma.application.findUnique({
         where: {
-          id: userid
+          id: userid as string
         },
         select: {
           id: true,
@@ -191,18 +176,17 @@ router.get('/bots/:userid', staffAccessMiddleware(3), async (req: any, res: any)
           name: true,
           icon: true,
           description: true,
+          secret: true,
           botId: true,
-        },
-        include: {
-          owner: true,
+          owner: true, 
           bot: true,
-        },
+        }
       }),
 
       prisma.guild.findMany({
         where: {
           members: {
-            some: { user_id: userid }
+            some: { user_id: userid as string }
           }
         },
         select: {
@@ -218,7 +202,7 @@ router.get('/bots/:userid', staffAccessMiddleware(3), async (req: any, res: any)
     }
 
     if (userRet.owner != null) {
-      userRet.owner = globalUtils.miniUserObject(userRet.owner);
+     // userRet.owner = globalUtils.miniUserObject(userRet.owner as User);
     }
 
     const userWithGuilds = {
@@ -234,36 +218,25 @@ router.get('/bots/:userid', staffAccessMiddleware(3), async (req: any, res: any)
   }
 });
 
-router.get('/guilds/:guildid', staffAccessMiddleware(3), async (req: any, res: any) => {
+router.get('/guilds/:guildid', staffAccessMiddleware(3), async (req: Request, res: Response) => {
   try {
-    const guildid = req.params.guildid;
+    const { guildid } = req.params;
 
-    if (!guildid) {
-      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-    }
-
-    const guildRet = await prisma.guild.findUnique({
-      where: {
-        id: guildid
+    const guild = await prisma.guild.findUnique({
+      where: { id: guildid as string },
+      include: {
+        owner: {
+          select: { id: true, username: true, discriminator: true, avatar: true, bot: true }
+        }
       }
     });
 
-    if (!guildRet) {
-      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-    }
+    if (!guild) return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
 
-    const owner = await prisma.user.findUnique({
-      where: {
-        id: guildRet.owner_id
-      }
+    return res.status(200).json({
+      ...GuildService._formatResponse(guild),
+      owner: guild.owner ? globalUtils.miniUserObject(guild.owner as User) : null
     });
-
-    let guildWithOwner: any = guildRet;
-    if (owner != null) {
-      guildWithOwner.owner = globalUtils.miniUserObject(owner);
-    } //this fucking sucks ass and we need to fix this ASAP.
-
-    return res.status(200).json(guildWithOwner);
   } catch (error) {
     logText(error, 'error');
 
@@ -271,7 +244,7 @@ router.get('/guilds/:guildid', staffAccessMiddleware(3), async (req: any, res: a
   }
 });
 
-function toPublicAccount(account: PublicAccount, staffDetails: unknown, needsMfa: boolean): PublicAccount {
+function toPublicAccount(account: Account, staffDetails: unknown, needsMfa: boolean) {
   return {
     id: account.id,
     username: account.username,
@@ -281,12 +254,12 @@ function toPublicAccount(account: PublicAccount, staffDetails: unknown, needsMfa
   };
 }
 
-router.get('/@me', staffAccessMiddleware(1), async (req: any, res: any): Promise<Response> => {
+router.get('/@me', staffAccessMiddleware(1), async (req: Request, res: Response): Promise<Response> => {
   try {
     const publicAccount = toPublicAccount(
-      req.account,
+      req.account!!,
       req.staff_details,
-      global.config.mfa_required_for_admin as boolean
+      ctx.config?.mfa_required_for_admin as boolean
     );
 
     return res.status(200).json(publicAccount);
@@ -297,7 +270,7 @@ router.get('/@me', staffAccessMiddleware(1), async (req: any, res: any): Promise
   }
 });
 
-router.get('/reports', staffAccessMiddleware(1), async (_req: any, res: any) => {
+router.get('/reports', staffAccessMiddleware(1), async (_req: Request, res: Response) => {
   try {
     const reports = await prisma.instanceReport.findMany({
       where: {
@@ -313,7 +286,7 @@ router.get('/reports', staffAccessMiddleware(1), async (_req: any, res: any) => 
   }
 });
 
-router.patch('/reports/:reportid', staffAccessMiddleware(1), async (req: any, res: any) => {
+router.patch('/reports/:reportid', staffAccessMiddleware(1), async (req: Request, res: Response) => {
   try {
     const reportid = req.params.reportid;
 
@@ -338,7 +311,7 @@ router.patch('/reports/:reportid', staffAccessMiddleware(1), async (req: any, re
 
     const tryUpdateReport = await prisma.instanceReport.update({
       where: {
-        id: reportid
+        id: reportid as string
       },
       data: {
         action: action.toUpperCase()
@@ -357,7 +330,7 @@ router.patch('/reports/:reportid', staffAccessMiddleware(1), async (req: any, re
   }
 });
 
-router.delete('/guilds/:guildid', staffAccessMiddleware(3), async (req: any, res: any) => {
+router.delete('/guilds/:guildid', staffAccessMiddleware(3), async (req: Request, res: Response) => {
   try {
     const guildid = req.params.guildid;
 
@@ -367,7 +340,7 @@ router.delete('/guilds/:guildid', staffAccessMiddleware(3), async (req: any, res
 
     const guildRet = await prisma.guild.findUnique({
       where: {
-        id: guildid
+        id: guildid as string
       }
     });
 
@@ -375,15 +348,15 @@ router.delete('/guilds/:guildid', staffAccessMiddleware(3), async (req: any, res
       return res.status(400).json(errors.response_404.UNKNOWN_GUILD);
     }
 
-    const deletedGuild = await prisma.guild.delete({
-      where: { id: guildid },
+    await dispatcher.dispatchEventInGuild(guildid as string, 'GUILD_DELETE', {
+      id: guildid,
+    }); //Since dispatch event in guild gets the guild, we need to call the event before we delete it for real
+
+    await prisma.guild.delete({
+      where: { id: guildid as string },
       include: {
         members: true
       }
-    } as any);
-
-    await dispatcher.dispatchEventInGuild(deletedGuild, 'GUILD_DELETE', {
-      id: guildid,
     });
 
     return res.status(204).send();
@@ -397,17 +370,17 @@ router.delete('/guilds/:guildid', staffAccessMiddleware(3), async (req: any, res
   }
 });
 
-router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (req: any, res: any) => {
+router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (req: Request, res: Response) => {
   try {
     const user = req.user;
 
     if (!user) {
       return res
         .status(404)
-        .json(user.bot ? errors.response_404.UNKNOWN_BOT : errors.response_404.UNKNOWN_USER);
+        .json(user!!.bot ? errors.response_404.UNKNOWN_BOT : errors.response_404.UNKNOWN_USER);
     } //yeah that is another problem to solve
 
-    if (user.id === req.account.id || req.is_user_staff) {
+    if (user.id === req.account!!.id || req.is_user_staff) {
       //Should we allow them to disable other staff members?
       return res
         .status(404)
@@ -439,7 +412,7 @@ router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (
     }
 
     try {
-      if (user.id === req.staff_details.user_id || user.id === '643945264868098049') {
+      if (user.id === req.staff_details!!.user_id || user.id === '643945264868098049') {
         return false;
       } // Safety net
 
@@ -448,7 +421,7 @@ router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (
 
       await prisma.user.update({
         where: {
-          id: req.params.userid
+          id: req.params.userid as string
         },
         data: {
           disabled_until: disabled_until,
@@ -456,7 +429,7 @@ router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (
         }
       });  //to-do actually do this properly
 
-      const audit_log = req.staff_details.audit_log;
+      const audit_log = req.staff_details!!.audit_log;
       const moderation_id = generate();
       const deconstructed =  deconstruct(moderation_id);
       const timestamp = deconstructed.date.toISOString();
@@ -471,20 +444,20 @@ router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (
           until_when: disabled_until, // Storing the text 'FOREVER' or actual date in the audit log
         },
         reasoning: audit_log_reason,
-      };
+      } as StaffAuditLogEntry;
 
       audit_log.push(audit_entry);
 
       await prisma.staff.update({
         where: {
-          user_id: req.staff_details.user_id
+          user_id: req.staff_details!!.user_id
         },
         data: {
-          audit_log: audit_log
+          audit_log: audit_log as any
         }
       })
 
-      await dispatcher.dispatchLogoutTo(req.params.userid);
+      await dispatcher.dispatchLogoutTo(req.params.userid as string);
 
       return res.status(200).json(audit_entry);
     } catch (error) {
@@ -498,7 +471,7 @@ router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (
   }
 });
 
-router.get('/staff', staffAccessMiddleware(4), async (_req: any, res: any) => {
+router.get('/staff', staffAccessMiddleware(4), async (_req: Request, res: Response) => {
   try {
     const staffMembers = await prisma.staff.findMany({
       select: {
@@ -532,7 +505,7 @@ router.get('/staff', staffAccessMiddleware(4), async (_req: any, res: any) => {
   }
 });
 
-router.get('/staff/audit-logs', staffAccessMiddleware(4), async (_req: any, res: any) => {
+router.get('/staff/audit-logs', staffAccessMiddleware(4), async (_req: Request, res: Response) => {
   try {
     const staffWithLogs = await prisma.staff.findMany({
       where: {
@@ -573,7 +546,7 @@ router.get('/staff/audit-logs', staffAccessMiddleware(4), async (_req: any, res:
   }
 });
 
-router.post('/staff', staffAccessMiddleware(4), async (req: any, res: any) => {
+router.post('/staff', staffAccessMiddleware(4), async (req: Request, res: Response) => {
   try {
     const { user_id, privilege } = req.body;
 
@@ -649,7 +622,7 @@ router.post('/staff', staffAccessMiddleware(4), async (req: any, res: any) => {
   }
 });
 
-router.post('/staff/:userid', staffAccessMiddleware(4), async (req: any, res: any) => {
+router.post('/staff/:userid', staffAccessMiddleware(4), async (req: Request, res: Response) => {
   try {
     const { user, account, is_user_staff } = req;
     const { privilege } = req.body;
@@ -658,11 +631,11 @@ router.post('/staff/:userid', staffAccessMiddleware(4), async (req: any, res: an
       return res.status(404).json(errors.response_404.UNKNOWN_USER);
     }
 
-    if (user.id === account.id || !is_user_staff) {
+    if (user.id === account!!.id || !is_user_staff) {
       return res.status(404).json(errors.response_404.UNKNOWN_USER);
     }
 
-    if (!privilege || privilege > 3 || privilege <= 0) {
+    if (!privilege || privilege > StaffPrivilegeLevel.ADMIN || privilege <= 0) {
       return res.status(400).json(errors.response_400.INVALID_PRIVILEGE);
     }
 
@@ -706,15 +679,11 @@ router.post('/staff/:userid', staffAccessMiddleware(4), async (req: any, res: an
   }
 });
 
-router.delete('/staff/:userid', staffAccessMiddleware(4), async (req: any, res: any) => {
+router.delete('/staff/:userid', staffAccessMiddleware(4), async (req: Request, res: Response) => {
   try {
-    const user = req.user;
+    const user = req.user!!;
 
-    if (!user) {
-      return res.status(404).json(errors.response_404.UNKNOWN_USER);
-    }
-
-    if (user.id === req.account.id || !req.is_user_staff) {
+    if (user.id === req.account!!.id || !req.is_user_staff) {
       return res.status(404).json(errors.response_404.UNKNOWN_USER);
     }
 
@@ -742,15 +711,11 @@ router.delete('/staff/:userid', staffAccessMiddleware(4), async (req: any, res: 
   }
 });
 
-router.delete('/staff/:userid/audit-logs', staffAccessMiddleware(4), async (req: any, res: any) => {
+router.delete('/staff/:userid/audit-logs', staffAccessMiddleware(4), async (req: Request, res: Response) => {
   try {
-    const user = req.user;
+    const user = req.user!!;
 
-    if (!user) {
-      return res.status(404).json(errors.response_404.UNKNOWN_USER);
-    }
-
-    if (user.id === req.account.id || !req.is_user_staff) {
+    if (user.id === req.account!!.id || !req.is_user_staff) {
       return res.status(404).json(errors.response_404.UNKNOWN_USER);
     }
 
@@ -771,12 +736,12 @@ router.delete('/staff/:userid/audit-logs', staffAccessMiddleware(4), async (req:
   }
 });
 
-router.get('/messages', staffAccessMiddleware(2), async (req: any, res: any) => {
+router.get('/messages', staffAccessMiddleware(2), async (req: Request, res: Response) => {
   try {
-    let channelId = req.query.channelId;
-    let messageId = req.query.messageId;
-    let context = req.query.context;
-    let cdnLink = req.query.cdnLink;
+    let channelId: string | null = req.query.channelId as string;
+    let messageId: string | null = req.query.messageId as string;
+    let context: string | null = req.query.context as string;
+    let cdnLink: string | null = req.query.cdnLink as string;
     let message;
 
     const normalizeParam = (param) => {
@@ -899,7 +864,7 @@ router.get('/messages', staffAccessMiddleware(2), async (req: any, res: any) => 
   }
 });
 
-router.delete('/messages/:messageid', staffAccessMiddleware(2), async (req: any, res: any) => {
+router.delete('/messages/:messageid', staffAccessMiddleware(2), async (req: Request, res: Response) => {
   try {
     const messageid = req.params.messageid;
 
@@ -908,7 +873,7 @@ router.delete('/messages/:messageid', staffAccessMiddleware(2), async (req: any,
     }
 
     const deletedMsg = await prisma.message.delete({
-      where: { message_id: messageid },
+      where: { message_id: messageid as string },
       select: {
         message_id: true,
         guild_id: true,
@@ -923,13 +888,13 @@ router.delete('/messages/:messageid', staffAccessMiddleware(2), async (req: any,
       include: {
         members: true
       }
-    } as any);
+    } as any); // make this more efficient
 
     if (!guildRet) {
       return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
     }
 
-    await dispatcher.dispatchEventInGuild(guildRet, 'MESSAGE_DELETE', {
+    await dispatcher.dispatchEventInGuild(guildRet.id, 'MESSAGE_DELETE', {
       id: deletedMsg.message_id,
       guild_id: deletedMsg.guild_id,
       channel_id: deletedMsg.channel_id,
@@ -947,17 +912,17 @@ router.delete('/messages/:messageid', staffAccessMiddleware(2), async (req: any,
   }
 });
 
-router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), async (req: any, res: any) => {
+router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), async (req: Request, res: Response) => {
   try {
-    const user = req.user;
+    const user = req.user as User;
 
     if (!user) {
       return res
         .status(404)
-        .json(user.bot ? errors.response_404.UNKNOWN_BOT : errors.response_404.UNKNOWN_USER);
+        .json(errors.response_404.UNKNOWN_USER);
     }
 
-    if (user.id === req.account.id || req.is_user_staff) {
+    if (user.id === req.account!!.id || req.is_user_staff) {
       return res
         .status(404)
         .json(user.bot ? errors.response_404.UNKNOWN_BOT : errors.response_404.UNKNOWN_USER);
@@ -973,27 +938,27 @@ router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), async (r
 
     if (user.bot) {
       await prisma.$transaction([
-        prisma.bot.delete({ where: { id: req.params.userid } }),
-        prisma.application.delete({ where: { id: req.params.userid } })
+        prisma.bot.delete({ where: { id: req.params.userid as string } }),
+        prisma.application.delete({ where: { id: req.params.userid as string } })
       ]);
 
-      await dispatcher.dispatchLogoutTo(req.params.userid);
+      await dispatcher.dispatchLogoutTo(req.params.userid as string);
 
       return res.status(204).send();
     }
 
     try {
-      if (req.params.userid === req.staff_details.user_id || req.params.userid === '643945264868098049') {
+      if (req.params.userid === req.staff_details?.user_id || req.params.userid === '643945264868098049') {
         return false;
       } // Safety net
 
       await prisma.user.delete({
         where: {
-          id: req.params.userid
+          id: req.params.userid as string
         }
       }); //figure out messages
 
-      const audit_log = req.staff_details.audit_log;
+      const audit_log = req.staff_details?.audit_log!!;
       const moderation_id = generate();
       const deconstructed = deconstruct(moderation_id);
       const timestamp = deconstructed.date.toISOString();
@@ -1006,20 +971,20 @@ router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), async (r
           id: req.params.userid,
         },
         reasoning: audit_log_reason,
-      };
+      } as StaffAuditLogEntry;
 
       audit_log.push(audit_entry);
 
       await prisma.staff.update({
         where: {
-          user_id: req.staff_details.user_id
+          user_id: req.staff_details!!.user_id
         },
         data: {
-          audit_log: audit_log
+          audit_log: audit_log as any
         }
       })
 
-      await dispatcher.dispatchLogoutTo(req.params.userid);
+      await dispatcher.dispatchLogoutTo(req.params.userid as string);
 
       return res.status(200).json(audit_entry);
     } catch (error: any) {
@@ -1039,7 +1004,7 @@ router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), async (r
   }
 });
 
-router.get('/settings', staffAccessMiddleware(4), async (_req: any, res: any) => {
+router.get('/settings', staffAccessMiddleware(4), async (_req: Request, res: Response) => {
   try {
     const configFile = readFileSync(join(process.cwd(), 'config.json'), {
       encoding: 'utf-8',
@@ -1055,7 +1020,7 @@ router.get('/settings', staffAccessMiddleware(4), async (_req: any, res: any) =>
   }
 });
 
-router.post('/settings', staffAccessMiddleware(4), async (req: any, res: any) => {
+router.post('/settings', staffAccessMiddleware(4), async (req: Request, res: Response) => {
   try {
     const settingsToChange = req.body;
 

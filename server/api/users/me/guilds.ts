@@ -3,27 +3,13 @@ import { Router } from 'express';
 import dispatcher from '../../../helpers/dispatcher.ts';
 import errors from '../../../helpers/errors.ts';
 import globalUtils from '../../../helpers/globalutils.ts';
-import lazyRequest from '../../../helpers/lazyRequest.ts';
 import { logText } from '../../../helpers/logger.ts';
 import { guildMiddleware, rateLimitMiddleware } from '../../../helpers/middlewares.ts';
-import Watchdog from '../../../helpers/watchdog.ts';
-import type { NextFunction, Request, Response } from "express";
+import type { Request, Response } from "express";
 import { prisma } from '../../../prisma.ts';
+import { cacheForMiddleware } from '../../../helpers/middlewares.ts';
 
 const router = Router();
-
-router.param('guildid', async (req: any, _res: Response, next: NextFunction, guildid: string) => {
-  req.guild = await prisma.guild.findUnique({
-    where: {
-      id: guildid
-    },
-    include: {
-      members: true
-    }
-  });
-
-  next();
-});
 
 router.delete(
   '/:guildid',
@@ -32,19 +18,14 @@ router.delete(
     global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
     global.config.ratelimit_config.leaveGuild.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.leaveGuild.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       try {
-        const user = req.account;
-        const guild = req.guild;
+        const user = req.account!!;
+        const guild = req.guild!!;
 
         if (guild.owner_id == user.id) {
-          await dispatcher.dispatchEventInGuild(guild, 'GUILD_DELETE', {
+          await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_DELETE', {
             id: req.params.guildid,
           });
 
@@ -67,17 +48,7 @@ router.delete(
             id: req.params.guildid,
           });
 
-          const activeSessions = dispatcher.getAllActiveSessions();
-
-          for (const session of activeSessions) {
-            if (session.subscriptions && session.subscriptions[req.guild.id]) {
-              if (session.user.id === user.id) continue;
-
-              await lazyRequest.handleMemberRemove(session, req.guild, user.id);
-            }
-          }
-
-          await dispatcher.dispatchEventInGuild(req.guild, 'GUILD_MEMBER_REMOVE', {
+          await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_REMOVE', {
             type: 'leave',
             user: globalUtils.miniUserObject(user),
             guild_id: String(req.params.guildid),
@@ -108,21 +79,17 @@ router.patch(
     global.config.ratelimit_config.updateUsersGuildSettings.maxPerTimeFrame,
     global.config.ratelimit_config.updateUsersGuildSettings.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.updateUsersGuildSettings.maxPerTimeFrame,
-    global.config.ratelimit_config.updateUsersGuildSettings.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
-      const user = req.account;
-      const guild = req.guild;
+      const user = req.account!!;
+      const guild = req.guild!!;
 
       const userData = await prisma.user.findUnique({
         where: { id: user.id },
         select: { guild_settings: true }
       });
 
+      //Move this to use GuildSettings.
       let allSettings = (userData?.guild_settings as any[]) || [];
       let guildSettings = allSettings.find((x) => x.guild_id === guild.id);
 
@@ -179,13 +146,14 @@ router.patch(
   },
 );
 
-router.get('/premium/subscriptions', async (req: any, res: Response) => {
+router.get('/premium/subscriptions', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   if (global.config.infinite_boosts) {
     return res.status(200).json([]);
   }
 
+  const account = req.account!!;
   const subscriptions = await prisma.guildSubscription.findMany({
-      where: { user_id: req.account.id },
+      where: { user_id: account.id },
       select: {
         guild_id: true,
         user_id: true,

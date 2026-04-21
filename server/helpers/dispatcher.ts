@@ -3,7 +3,7 @@ import { handleMembersSync } from './lazyRequest.js';
 import { logText } from './logger.ts';
 
 const dispatcher = {
-  dispatchEventTo: async (user_id: string, type: string, payload: any): Promise<boolean> => {
+  dispatchEventTo: (user_id: string, type: string, payload: any): boolean => {
     const sessions = global.userSessions.get(user_id);
 
     if (!sessions || sessions.size === 0) return false;
@@ -14,7 +14,7 @@ const dispatcher = {
 
     return true;
   },
-  dispatchLogoutTo: async (user_id: string): Promise<boolean> => {
+  dispatchLogoutTo: (user_id: string): boolean => {
     const sessions = global.userSessions.get(user_id);
 
     if (!sessions || sessions.size === 0) return false;
@@ -26,14 +26,14 @@ const dispatcher = {
 
     return true;
   },
-  dispatchEventToEveryoneWhatAreYouDoingWhyWouldYouDoThis: async (type: string, payload: any) => {
-    global.userSessions.forEach((sessions: any, _userId: string) => {
-      for (let z = 0; z < sessions.length; z++) {
-        sessions[z].dispatch(type, payload);
+  dispatchEventToEveryoneWhatAreYouDoingWhyWouldYouDoThis: (type: string, payload: any) => {
+    global.userSessions.forEach((sessions: any[]) => {
+      for (const session of sessions) {
+        session.dispatch(type, payload);
       }
     });
   },
-  dispatchGuildMemberUpdateToAllTheirGuilds: async (user_id: string, new_user: any): Promise<boolean> => {
+  dispatchGuildMemberUpdateToAllTheirGuilds: (user_id: string, new_user: any): boolean => {
     const sessions = global.userSessions.get(user_id);
 
     if (!sessions || sessions.size === 0) return false;
@@ -46,92 +46,73 @@ const dispatcher = {
 
     return true;
   },
-  dispatchEventToAllPerms: async (guild_id: string, channel_id: string, permission_check: any, type: string, payload: any): Promise<boolean> => {
-    const guilds = await prisma.guild.findMany({
-      where: {
-        id: guild_id
-      },
-      include: {
-        channels: true,
-        members: true
+  dispatchEventToAllPerms: async (guild_id: string, channel_id: string | null, permission_check: string, type: string, payload: any): Promise<boolean> => {
+    const guild = await prisma.guild.findUnique({
+      where: { id: guild_id },
+      select: {
+        id: true,
+        owner_id: true,
+        roles: true,
+        members: { select: { user_id: true, roles: true } },
+        channels: channel_id ? { where: { id: channel_id } } : true
       }
     });
 
-    if (guilds.length == 0) return false;
+    if (!guild || guild.members.length === 0) return false;
+    const channel = channel_id ? guild.channels.find(c => c.id === channel_id) : null;
 
-    let guild = guilds[0];
-    let channel;
-
-    if (channel_id) {
-      channel = guild.channels.find((x) => x.id === channel_id);
-
-      if (!channel) return false;
-    }
-
-    const members = guild.members;
-
-    if (members.length == 0) return false;
-
-    for (let i = 0; i < members.length; i++) {
-      const member = members[i];
-
+    for (const member of guild.members) {
       const uSessions = global.userSessions.get(member.user_id);
-
       if (!uSessions) continue;
 
-      for (let z = 0; z < uSessions.length; z++) {
-        const uSession = uSessions[z];
-
-        if (guild.owner_id != member.user_id && uSession && uSession.socket) {
-          //Skip checks if owner
-          const guildPermCheck = global.permissions.hasGuildPermissionTo(
+      for (const uSession of uSessions) {
+        if (guild.owner_id !== member.user_id) {
+          const guildPermCheck = permissions.hasGuildPermissionTo(
             guild,
             member.user_id,
             permission_check,
             uSession.socket.client_build,
           );
-
-          if (!guildPermCheck) break; //No access to guild
-
+          if (!guildPermCheck) continue;
+          
           if (channel) {
-            const channelPermCheck = global.permissions.hasChannelPermissionTo(
-              channel,
-              guild,
-              member.user_id,
-              permission_check,
+            const channelPermCheck = permissions.hasChannelPermissionTo(
+                channel,
+                guild,
+                member.user_id,
+                permission_check,
             );
-
-            if (!channelPermCheck) {
-              break; //No access to channel
-            }
+            if (!channelPermCheck) continue;
           }
         }
 
-        //Success
         uSession.dispatch(type, payload);
       }
     }
 
     logText(`(Event to all perms) -> ${type}`, 'dispatcher');
-
     return true;
   },
-  //this system is so weird but hey it works - definitely due for a rewrite
   dispatchEventInGuildToThoseSubscribedTo: async (
-    guild: any,
+    guild_id: string,
     type: string,
     payload: any,
     ignorePayload = false,
     typeOverride: any = null,
   ): Promise<boolean> => {
-    if (!guild?.id) return false;
+    const guild = await prisma.guild.findUnique({
+      where: { id: guild_id },
+      include: { channels: true, members: true }
+    });
 
+    if (!guild) return false;
+    
     const activeSessions = Array.from(global.userSessions.values()).flat();
+
     const updatePromises = activeSessions.map(async (session: any) => {
       const guildInSession = session.guilds?.find((g) => g.id === guild.id);
       if (!guildInSession) return;
 
-      const socket = session.socket;
       let finalPayload = payload;
       let finalType = typeOverride || type;
 
@@ -145,30 +126,32 @@ const dispatcher = {
             finalType = 'GUILD_MEMBER_LIST_UPDATE';
           }
         } catch (err: any) {
-          console.error(err);
-          console.log(err.stackTrace);
           logText(`Error executing dynamic payload: ${err}`, 'error');
           return;
         }
       } else if (type === 'PRESENCE_UPDATE' && payload && payload.user) {
         finalPayload = { ...payload };
 
-        const member = guild.members.find((m) => m.user.id === finalPayload.user.id);
+        const member = guild.members.find((m) => m.user_id === finalPayload.user.id);
 
         if (member) {
           finalPayload.nick = member.nick;
           finalPayload.roles = member.roles;
         }
 
-        const isLegacy =
-          socket &&
-          (socket.client_build_date.getFullYear() < 2016 ||
-            (socket.client_build_date.getFullYear() === 2016 &&
-              socket.client_build_date.getMonth() < 8));
+        const isLegacyClient =
+          (session.socket && session.socket.client_build_date.getFullYear() === 2015) ||
+          (session.socket &&
+            session.socket.client_build_date.getFullYear() === 2016 &&
+            session.socket.client_build_date.getMonth() < 8) ||
+          (session.socket &&
+            session.socket.client_build_date.getFullYear() === 2016 &&
+            session.socket.client_build_date.getMonth() === 8 &&
+            session.socket.client_build_date.getDate() < 26);
 
-        const current_status = finalPayload.status.toLowerCase();
+        if (isLegacyClient) {
+          const current_status = payload.status.toLowerCase();
 
-        if (isLegacy) {
           if (['offline', 'invisible'].includes(current_status)) {
             finalPayload.status = 'offline';
           } else if (current_status === 'dnd') {
@@ -198,76 +181,41 @@ const dispatcher = {
 
     return true;
   },
-  getSessionsInGuild: (guild) => {
-    const sessions: any = [];
-
-    if (!guild || !guild.members) {
-      return [];
-    }
-
-    for (let i = 0; i < guild.members.length; i++) {
-      const member = guild.members[i];
-
-      if (!member) continue;
-
-      const uSessions: any = global.userSessions.get(member.id);
-
-      if (!uSessions || uSessions.length === 0) continue;
-
-      sessions.push(...uSessions);
-    }
-
-    return sessions;
-  },
-  getAllActiveSessions: () => {
-    const usessions: any = [];
-
-    global.userSessions.forEach((sessions: any, _userId: string) => {
-      for (let z = 0; z < sessions.length; z++) {
-        if (sessions[z].dead || sessions[z].terminated) continue;
-
-        usessions.push(sessions[z]);
-      }
+  dispatchEventInGuild: async (guild_id: string, type: string, payload: any): Promise<boolean> => {
+    const guildMembers = await prisma.member.findMany({
+      where: { guild_id },
+      select: { user_id: true }
     });
 
-    return usessions;
-  },
-  dispatchEventInGuild: async (guild: any, type: string, payload: any): Promise<boolean> => {
-    if (!guild || !guild.members) {
-      return false;
-    }
+    if (guildMembers.length === 0) return false;
 
-    for (let i = 0; i < guild.members.length; i++) {
-      const member = guild.members[i];
-
-      if (!member) continue;
-
+    for (const member of guildMembers) {
       const uSessions = global.userSessions.get(member.user_id);
-
       if (!uSessions || uSessions.length === 0) continue;
 
-      for (let z = 0; z < uSessions.length; z++) {
-        const session = uSessions[z];
-        const socket = session.socket;
-        const finalPayload = typeof payload === 'function' ? payload : { ...payload };
-        const isLegacyClient =
-          (socket && socket.client_build_date.getFullYear() === 2015) ||
-          (socket &&
-            socket.client_build_date.getFullYear() === 2016 &&
-            socket.client_build_date.getMonth() < 8) ||
-          (socket &&
-            socket.client_build_date.getFullYear() === 2016 &&
-            socket.client_build_date.getMonth() === 8 &&
-            socket.client_build_date.getDate() < 26);
+      for (const session of uSessions) {
+        let finalPayload = typeof payload === 'function' ? await payload(session) : { ...payload };
 
-        if (type == 'PRESENCE_UPDATE' && isLegacyClient) {
-          const current_status = payload.status.toLowerCase();
+        if (type === 'PRESENCE_UPDATE' && session.socket) {
+          const isLegacyClient =
+          (session.socket && session.socket.client_build_date.getFullYear() === 2015) ||
+          (session.socket &&
+            session.socket.client_build_date.getFullYear() === 2016 &&
+            session.socket.client_build_date.getMonth() < 8) ||
+          (session.socket &&
+            session.socket.client_build_date.getFullYear() === 2016 &&
+            session.socket.client_build_date.getMonth() === 8 &&
+            session.socket.client_build_date.getDate() < 26);
 
-          if (['offline', 'invisible'].includes(current_status)) {
-            finalPayload.status = 'offline';
-          } else if (current_status === 'dnd') {
-            finalPayload.status = 'online';
-          }
+            if (isLegacyClient) {
+              const current_status = payload.status.toLowerCase();
+
+              if (['offline', 'invisible'].includes(current_status)) {
+                finalPayload.status = 'offline';
+              } else if (current_status === 'dnd') {
+                finalPayload.status = 'online';
+              }
+            }
         }
 
         session.dispatch(type, finalPayload);
@@ -278,18 +226,20 @@ const dispatcher = {
 
     return true;
   },
-  dispatchEventInPrivateChannel: async (channel: any, type: string, payload: any): Promise<boolean> => {
-    if (channel === null || !channel.recipients) return false;
+  dispatchEventInPrivateChannel: async (channel_id: string, type: string, payload: any): Promise<boolean> => {
+    const channel = await prisma.channel.findUnique({
+      where: { id: channel_id },
+      select: { recipients: { select: { id: true } } }
+    });
 
-    for (let i = 0; i < channel.recipients.length; i++) {
-      const recipient = channel.recipients[i].id;
+    if (!channel || !channel.recipients) return false;
 
-      const uSessions = global.userSessions.get(recipient);
-
+    for (const recipient of channel.recipients) {
+      const uSessions = global.userSessions.get(recipient.id);
       if (!uSessions || uSessions.length === 0) continue;
 
-      for (let z = 0; z < uSessions.length; z++) {
-        uSessions[z].dispatch(type, payload);
+      for (const session of uSessions) {
+        session.dispatch(type, payload);
       }
     }
 
@@ -297,33 +247,34 @@ const dispatcher = {
 
     return true;
   },
-  dispatchEventInChannel: async (guild: any, channel_id: string, type: string, payload: any): Promise<boolean> => {
-    if (guild === null) return false;
+  dispatchEventInChannel: async (guild_id: string, channel_id: string, type: string, payload: any): Promise<boolean> => {
+    const guild = await prisma.guild.findUnique({
+      where: { id: guild_id },
+      select: {
+        id: true,
+        owner_id: true,
+        roles: true,
+        members: { select: { user_id: true, roles: true } },
+        channels: { where: { id: channel_id } }
+      }
+    });
+
+    if (!guild) return false;
 
     const channel = guild.channels.find((x) => x.id === channel_id);
 
     if (channel == null) return false;
 
-    for (let i = 0; i < guild.members.length; i++) {
-      const member = guild.members[i];
+    for (const member of guild.members) {
+      const uSessions = global.userSessions.get(member.user_id);
+      if (!uSessions) continue;
 
-      if (!member) continue;
+      const hasAccess = permissions.hasChannelPermissionTo(channel, guild, member.user_id, 'READ_MESSAGES');
+      if (!hasAccess) continue;
 
-      const permissions = global.permissions.hasChannelPermissionTo(
-        channel,
-        guild,
-        member.id,
-        'READ_MESSAGES',
-      );
-
-      if (!permissions) continue;
-
-      const uSessions = global.userSessions.get(member.id);
-
-      if (!uSessions || uSessions.length === 0) continue;
-
-      for (let z = 0; z < uSessions.length; z++) {
-        uSessions[z].dispatch(type, payload);
+      for (const session of uSessions) {
+        const finalPayload = typeof payload === 'function' ? await payload(session, guild) : payload;
+        session.dispatch(type, finalPayload);
       }
     }
 
@@ -340,8 +291,6 @@ export const {
   dispatchGuildMemberUpdateToAllTheirGuilds,
   dispatchEventToAllPerms,
   dispatchEventInGuildToThoseSubscribedTo,
-  getSessionsInGuild,
-  getAllActiveSessions,
   dispatchEventInGuild,
   dispatchEventInPrivateChannel,
   dispatchEventInChannel,

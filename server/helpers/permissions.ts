@@ -1,3 +1,4 @@
+import { prisma } from '../prisma.ts';
 import { logText } from './logger.ts';
 
 const permissions = {
@@ -39,32 +40,42 @@ const permissions = {
       return false;
     }
   },
-  hasGuildPermissionTo(guild: any, user_id: string, key:string, _for_build: string): boolean {
+  async hasGuildPermissionTo(guild_id: string, user_id: string, key: string, _for_build: string): Promise<boolean> {
     try {
-      if (!guild) return false;
-
-      const member = guild.members.find((y) => (y.user_id || y.id) == user_id);
-
-      if (!member) return false;
-
-      if (guild.owner_id == user_id) return true;
-
-      const everyoneRole = guild.roles.find((x) => x.id === guild.id);
-      let totalPermissions = BigInt(everyoneRole ? everyoneRole.permissions : 0);
-
-      for (const roleId of member.roles) {
-        const role = guild.roles.find((x) => x.id === roleId);
-
-        if (role) {
-          totalPermissions |= BigInt(role.permissions);
+      const guild = await prisma.guild.findUnique({
+        where: { id: guild_id },
+        select: {
+          owner_id: true,
+          roles: {
+            select: {
+              role_id: true,
+              permissions: true,
+            }
+          },
+          members: {
+            where: { user_id: user_id },
+            select: { roles: true }
+          }
         }
+      });
+
+      if (!guild || guild.members.length === 0) return false;
+      if (guild.owner_id === user_id) return true;
+
+      const member = guild.members[0];
+      const everyoneRole = guild.roles.find(r => r.role_id === guild_id);
+
+      let totalPermissions = BigInt(everyoneRole?.permissions ?? 0);
+
+      for (const roleId of member.roles as string[]) {
+        const role = guild.roles.find(r => r.role_id === roleId);
+
+        if (role) totalPermissions |= BigInt(role.permissions);
       }
 
-      const ADMINISTRATOR = BigInt(8);
+      const ADMIN_BIT = BigInt(8);
 
-      if ((totalPermissions & ADMINISTRATOR) === ADMINISTRATOR) {
-        return true;
-      }
+      if ((totalPermissions & ADMIN_BIT) === ADMIN_BIT) return true;
 
       const permissionBit = BigInt(this.toObject()[key]);
 
@@ -74,47 +85,58 @@ const permissions = {
       return false;
     }
   },
-  hasChannelPermissionTo(channel: any, guild: any, user_id: string, key: string): boolean {
+  async hasChannelPermissionTo(channel_id: string, guild_id: string, user_id: string, key: string): Promise<boolean> {
     try {
-      if (!channel || !guild) return false;
-      if (guild.owner_id == user_id) return true;
-
-      const member = guild.members.find((y) => (y.user_id || y.id) == user_id);
-
-      if (!member) return false;
-
-      const everyoneRole = guild.roles.find((r) => r.id === guild.id);
-      let permissions = BigInt(everyoneRole ? everyoneRole.permissions : 0);
-
-      const memberRoles: any = [];
-
-      for (const roleId of member.roles) {
-        const role: any = guild.roles.find((r) => r.id === roleId);
-
-        if (role) {
-          memberRoles.push(role);
-          permissions |= BigInt(role.permissions);
+      const data = await prisma.guild.findUnique({
+        where: { id: guild_id },
+        select: {
+          owner_id: true,
+          roles: { select: { role_id: true, permissions: true } },
+          members: {
+            where: { user_id: user_id },
+            select: { roles: true }
+          },
+          channels: {
+            where: { id: channel_id },
+            select: { permission_overwrites: true }
+          }
         }
+      });
+
+      if (!data || !data.members[0] || !data.channels[0]) return false;
+      if (data.owner_id === user_id) return true;
+
+      const member = data.members[0];
+      const channel = data.channels[0];
+      const everyoneRole = data.roles.find(r => r.role_id === guild_id);
+
+      let perms = BigInt(everyoneRole?.permissions ?? 0);
+
+      for (const roleId of member.roles as string[]) {
+        const role = data.roles.find(r => r.role_id === roleId);
+
+        if (role) perms |= BigInt(role.permissions);
       }
 
       const ADMIN_BIT = BigInt(8);
 
-      if ((permissions & ADMIN_BIT) === ADMIN_BIT) return true;
+      if ((perms & ADMIN_BIT) === ADMIN_BIT) return true;
 
-      if (channel.permission_overwrites && channel.permission_overwrites.length > 0) {
-        const overwrites = channel.permission_overwrites;
-        const everyoneOverwrite = overwrites.find((o) => o.id === guild.id);
+      const overwrites = channel.permission_overwrites as any[] || [];
+
+      if (overwrites.length > 0) {
+        const everyoneOverwrite = overwrites.find(o => o.id === guild_id);
 
         if (everyoneOverwrite) {
-          permissions &= ~BigInt(everyoneOverwrite.deny);
-          permissions |= BigInt(everyoneOverwrite.allow);
+          perms &= ~BigInt(everyoneOverwrite.deny);
+          perms |= BigInt(everyoneOverwrite.allow);
         }
 
         let roleAllow = BigInt(0);
         let roleDeny = BigInt(0);
 
-        for (const role of memberRoles as any[]) {
-          const overwrite = overwrites.find((o) => o.id === role.id);
+        for (const roleId of member.roles as string[]) {
+          const overwrite = overwrites.find(o => o.id === roleId);
 
           if (overwrite) {
             roleAllow |= BigInt(overwrite.allow);
@@ -122,24 +144,24 @@ const permissions = {
           }
         }
 
-        permissions &= ~roleDeny;
-        permissions |= roleAllow;
+        perms &= ~roleDeny;
+        perms |= roleAllow;
 
-        const memberOverwrite = overwrites.find((o) => o.id === user_id);
+        const memberOverwrite = overwrites.find(o => o.id === user_id);
 
         if (memberOverwrite) {
-          permissions &= ~BigInt(memberOverwrite.deny);
-          permissions |= BigInt(memberOverwrite.allow);
+          perms &= ~BigInt(memberOverwrite.deny);
+          perms |= BigInt(memberOverwrite.allow);
         }
       }
 
-      if ((permissions & ADMIN_BIT) === ADMIN_BIT) return true;
+      if ((perms & ADMIN_BIT) === ADMIN_BIT) return true;
 
       const bitmask = BigInt(this.toObject()[key]);
-
-      return (permissions & bitmask) === bitmask;
+      return (perms & bitmask) === bitmask;
     } catch (error) {
       logText(error, 'error');
+      
 
       return false;
     }

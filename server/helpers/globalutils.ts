@@ -4,10 +4,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import encode from './base64url.js';
 import dispatcher from './dispatcher.js';
 import { logText } from './logger.ts';
-import { deconstruct, generate } from './snowflake.js';
+import { generate } from './snowflake.js';
 import { prisma } from "../prisma.ts";
 import md5 from './md5.ts';
 import { compareSync, genSalt, hash } from 'bcrypt';
+import type { Request } from "express"
+import type { GuildRegion } from '../types/guild.ts';
+import type { Config } from '../types/config.ts';
+import type { User } from '../types/user.ts';
+import type { Account } from '../types/account.ts';
+import { ChannelType, type Channel } from '../types/channel.ts';
+import type { Bot } from '../types/bot.ts';
 
 const configPath = './config.json';
 
@@ -18,7 +25,7 @@ if (!existsSync(configPath)) {
   process.exit(1);
 }
 
-const _config: any = JSON.parse(readFileSync(configPath, 'utf8'));
+const _config: Config = JSON.parse(readFileSync(configPath, 'utf8'));
 
 const globalUtils = {
   config: _config,
@@ -243,72 +250,19 @@ const globalUtils = {
       return -1;
     }
   },
-  createSystemMessage: async (guild_id: string, channel_id: string, type: number, props: any = []) => {
-    //type 1 needs a different body for it to work, look into that later
+  generateGatewayURL: (req: Request | null): string => {
+    let host = req?.headers['host'];
 
-    /*
-        Msg type 
-            0 - default
-            1 - recipient add to group (GROUP DM RELATED)
-            2 - recipient removed from group (GROUP DM RELATED)
-            3 - call (DM / GROUP DM RELATED)
-            4 - channel name change (GROUP DM RELATED)
-            5 - channel icon change (GROUP DM RELATED)
-            6 - pins add (SERVER)
-            7 - guild member join (SERVER)
-        */
-    try {
-      const id = generate();
-      const nonce = generate();
-      const author_id = props[0].id || generate();
-      const date = deconstruct(id).date.toISOString();
-
-      let mention_id = generate();
-
-      if (type === 1) {
-        mention_id = props[1].id;
-      }
-
-      let msg = await prisma.message.create({
-        data: {
-          type: type,
-          guild_id: guild_id,
-          message_id: id,
-          channel_id: channel_id,
-          author_id: author_id,
-          nonce: nonce,
-          content: `${type === 1 ? `<@${mention_id}>` : ''}`,
-          timestamp: date
-        }
-      })
-
-      await prisma.channel.update({
-        where: {
-          id: channel_id
-        },
-        data: {
-          last_message_id: id
-        }
-      });
-
-      if (type === 1) {
-        msg.mentions = [miniUserObject(props[1])];
-      } else {
-        msg.mentions = [];
-      }
-
-      return msg;
-    } catch (error) {
-      logText(error, 'error');
-
-      return null;
+    if (host && _config.includePortInWsUrl) {
+      host = host.split(':')[0];
     }
-  },
-  generateGatewayURL: (req: any): string => {
-    let host = req.headers['host'];
-    if (host) host = host.split(':', 2)[0];
+
     const baseUrl = _config.gateway_url == '' ? (host ?? _config.base_url) : _config.gateway_url;
-    return `${_config.secure ? 'wss' : 'ws'}://${baseUrl}${_config.includePortInWsUrl && (_config.secure ? _config.ws_port != 443 : _config.ws_port != 80) ? `:${_config.ws_port}` : ''}`;
+    const result = `${_config.secure ? 'wss' : 'ws'}://${baseUrl}${_config.includePortInWsUrl && (_config.secure ? _config.ws_port != 443 : _config.ws_port != 80) ? `:${_config.ws_port}` : ''}`;
+
+    console.log(result);
+
+    return result;
   },
   generateRTCServerURL: (): string => {
     return _config.signaling_server_url == ''
@@ -366,11 +320,17 @@ const globalUtils = {
       user: globalUtils.miniUserObject(member.user),
     };
   },
-  getGuildPresences: (guild: any): any => {
+  getGuildPresences: async (guild_id: string): Promise<any[]> => {
     const presences: any = [];
 
-    for (var member of guild.members) {
-      const presence: any = globalUtils.getUserPresence(member);
+    const guildMembers = await prisma.member.findMany({
+      where: {
+        guild_id: guild_id
+      }
+    }); //??
+
+    for (var member of guildMembers) {
+      const presence = globalUtils.getUserPresence(member);
 
       presences.push(presence);
     }
@@ -428,82 +388,53 @@ const globalUtils = {
       'meepo',
     ];
 
-    const selected: string[] = [];
+    const selected = new Set<string>();
 
-    while (selected.length < 3) {
-      const word = words[Math.floor(Math.random() * words.length)];
-
-      if (!selected.includes(word)) {
-        selected.push(word);
-      }
+    while (selected.size < 3) {
+      selected.add(words[Math.floor(Math.random() * words.length)]);
     }
 
-    return selected.join('-');
+    return selected.entries().toArray().join('-');
   },
-  addClientCapabilities: (client_build: any, obj: any): boolean => {
-    if (client_build === 'thirdPartyOrMobile') {
-      const now = new Date();
-      const months = [
-        'january',
-        'february',
-        'march',
-        'april',
-        'may',
-        'june',
-        'july',
-        'august',
-        'september',
-        'october',
-        'november',
-        'december',
-      ];
-      client_build = `${months[now.getMonth()]}_${now.getDate()}_${now.getFullYear()}`;
+  addClientCapabilities: (client_build: string, obj: any): boolean => {
+    if (!client_build || client_build === 'thirdPartyOrMobile' || client_build === 'undefined') {
+       client_build = 'october_5_2017';
     }
+
     const parts = client_build ? client_build.split('_') : null;
-    if (!parts || parts.length < 3) {
-      //Invalid release date format. Use defaults.
+
+    if (parts!.length < 3) {
       obj.client_build = '';
       obj.client_build_date = new Date();
       obj.channel_types_are_ints = false;
       return false;
-    } else {
-      const month = parts[0];
-      const day = parts[1];
-      const year = parts[2];
-      const date = new Date(`${month} ${day} ${year}`);
-
-      obj.client_build = client_build;
-      obj.client_build_date = date;
-      obj.plural_recipients =
-        (date.getFullYear() == 2016 && date.getMonth() >= 6) || date.getFullYear() >= 2017;
-      obj.channel_types_are_ints = obj.plural_recipients;
-      if (client_build === 'thirdPartyOrMobile') {
-        obj.isThirdPartyOrMobile = true;
-      }
-      return true;
     }
+
+    const month = parts![0];
+    const day = parts![1];
+    const year = parts![2];
+    const date = new Date(`${month} ${day} ${year}`);
+    const plural_recipients = (date.getFullYear() == 2016 && date.getMonth() >= 6) || date.getFullYear() >= 2017;
+
+    obj.client_build = client_build;
+    obj.client_build_date = date;
+    obj.plural_recipients = plural_recipients;
+    obj.channel_types_are_ints = plural_recipients;
+    obj.isThirdPartyOrMobile = client_build === 'thirdPartyOrMobile';
+
+    return true;
   },
   flagToReason: (flag: string): string => {
-    let ret = '';
+    const kvp = {
+      'NO_REGISTRATION' : 'Account registration is currently disabled on this instance.',
+      'NO_GUILD_CREATION': 'Creating guilds is currenly not allowed on this instance.',
+      'NO_INVITE_USE': 'You are not allowed to accept this invite.',
+      'NO_INVITE_CREATION': 'Creating invites is not allowed on this instance.'
+    };
 
-    switch (flag) {
-      case 'NO_REGISTRATION':
-        ret = 'Account registration is currently disabled on this instance.';
-        break;
-      case 'NO_GUILD_CREATION':
-        ret = 'Creating guilds is currently not allowed on this instance.';
-        break;
-      case 'NO_INVITE_USE':
-        ret = 'You are not allowed to accept this invite.';
-        break;
-      case 'NO_INVITE_CREATION':
-        ret = 'Creating invites is not allowed on this instance.';
-        break;
-    }
-
-    return ret;
+    return kvp[flag] ?? 'This is not a valid flag. Try another.';
   },
-  getRegions: (): any[] => {
+  getRegions: (): GuildRegion[] => {
     return [
       {
         id: '2016',
@@ -536,9 +467,10 @@ const globalUtils = {
     ];
   },
   serverRegionToYear: (region: string): string => {
-    return globalUtils.getRegions().find((x) => x.id.toLowerCase() == region)
-      ? globalUtils.getRegions().find((x) => x.id.toLowerCase() == region).name
-      : 'everything';
+    const regions = globalUtils.getRegions();
+    const region_obj = regions.find((x) => x.id.toLowerCase() == region.toLowerCase());
+
+    return region_obj?.name ?? 'everything';
   },
   canUseServer: (year: number, region: string): boolean => {
     const serverRegion = globalUtils.serverRegionToYear(region);
@@ -668,14 +600,14 @@ const globalUtils = {
         name: dbChannel.name,
         position: dbChannel.position,
         permission_overwrites: [],
-        ...([0, 2, 4, 5].includes(type) && { guild_id: guildId }),
-        ...([0, 2, 5].includes(type) && { parent_id: parentId }),
-        ...(type === 0 && {
+        ...([ChannelType.TEXT, ChannelType.VOICE, ChannelType.CATEGORY, ChannelType.NEWS].includes(type) && { guild_id: guildId }),
+        ...([ChannelType.TEXT, ChannelType.VOICE, ChannelType.NEWS].includes(type) && { parent_id: parentId }),
+        ...(type === ChannelType.TEXT && {
           topic: null,
           rate_limit_per_user: 0,
           nsfw: false,
         }),
-        ...(type === 2 && {
+        ...(type === ChannelType.VOICE && {
           bitrate: 64000,
           user_limit: 0,
         }),
@@ -711,7 +643,7 @@ const globalUtils = {
 
     return sanitizedObject;
   },
-  buildGuildObject: (guild: any, req: any): any => {
+  buildGuildObject: (guild: any, req: Request): any => {
     if (!guild) return null;
 
     if (!req.account) return null;
@@ -1058,6 +990,7 @@ const globalUtils = {
       await globalUtils.pingPrivateChannelUser(channel, recipient.id);
     }
   },
+  //to-do make private_channel take the id instead
   pingPrivateChannelUser: async (private_channel: any, recipient_id: any) => {
     const user = await prisma.user.findUnique({
       where: { id: recipient_id },
@@ -1170,16 +1103,25 @@ const globalUtils = {
 
     return msg;
   },
-  personalizeChannelObject: (req: any, channel: any, user: any = null): any => {
-    if (!req) return channel;
+  //probs move this to use request or socket
+  personalizeChannelObject: (req: any, channel: Channel, user?: User | null): Channel | null => {
+    if (!req) {
+      return channel;
+    }
 
-    if (!req.plural_recipients && channel.type >= 2) return null;
+    if (!req.plural_recipients && channel.type as number >= ChannelType.VOICE) {
+      return null;
+    }
 
     const clone: any = {};
+    
     Object.assign(clone, channel);
 
-    if (channel.recipients)
-      clone.recipients = channel.recipients.filter((r) => r.id != (req.user || user).id);
+    if (channel.recipients) {
+      if (req.user || user) {
+          clone.recipients = channel.recipients.filter((r) => r.id != (req.user!! || user).id);
+      }
+    }
 
     clone.is_private = clone.recipients && clone.recipients.length > 0 ? true : false;
 
@@ -1189,7 +1131,7 @@ const globalUtils = {
     }
 
     if (!req.channel_types_are_ints)
-      clone.type = globalUtils.channelTypeToString(parseInt(channel.type));
+      clone.type = globalUtils.channelTypeToString(parseInt(channel.type as string));
 
     return clone;
   },
@@ -1202,21 +1144,26 @@ const globalUtils = {
 
     return IDs;
   },
-  miniUserObject: (user: any): any => {
+  miniUserObject: (user: Account | User): User => {
     return {
       username: user.username,
       discriminator: user.discriminator,
       id: user.id,
       avatar: user.avatar,
       bot: user.bot,
-      flags: user.flags,
-      premium: user.premium || true,
+      premium: user.premium ?? true,
     };
   },
-  miniBotObject: (bot: any): any => {
+  miniBotObject: (bot: Account | Bot): Bot => {
     delete bot.token;
 
-    return bot;
+    return {
+      avatar: bot.avatar,
+      username: bot.username,
+      discriminator: bot.discriminator,
+      id: bot.id,
+      bot: true
+    };
   },
   getChannelMessages: async (channel_id: string, requester_id: string, limit: number = 25, before_id?: string | null, after_id?: string | null, includeReactions: boolean = false) => {
     try {

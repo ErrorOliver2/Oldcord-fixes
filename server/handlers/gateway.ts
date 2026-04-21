@@ -3,217 +3,234 @@ import dispatcher from '../helpers/dispatcher.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import lazyRequest from '../helpers/lazyRequest.ts';
 import session from '../helpers/session.js';
+import type WebSocket from 'ws';
+import { GatewayOpcode, type GatewayHeartbeatPacket, type GatewayIdentifyPacket, type GatewayLazyFetchPacket, type GatewayMemberChunksPacket, type GatewayPresencePacket, type GatewayResumePacket, type GatewayVoiceStatePacket } from '../types/gateway.ts';
+import type { AccountSettings } from '../types/account.ts';
+import { ChannelType } from '../types/channel.ts';
+import permissions from '../helpers/permissions.ts';
+import type { User } from '../types/user.ts';
+import type { Member } from '../types/member.ts';
+import { logText } from '../helpers/logger.ts';
+import ctx from '../context.ts';
+import type { Session } from '../types/session.ts';
 
-const OPCODES = {
-  HEARTBEAT: 1,
-  IDENTIFY: 2,
-  PRESENCE: 3,
-  VOICESTATE: 4,
-  RESUME: 6,
-  INVALID_SESSION: 9,
-  HEARTBEAT_INFO: 10,
-  HEARTBEAT_ACK: 11,
-  LAZYFETCH: 12,
-  MEMBERCHUNKS: 14,
-};
+async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) {
+  const { token, intents, presence, capabilities } = packet.d; //to-do should we use capabilities?
 
-async function handleIdentify(socket: any, packet: any) {
-  if (socket.identified || socket.session) {
+  if (socket.session) {
     return socket.close(4005, 'You have already identified.');
   }
 
-  global.gateway.debug('New client connection');
-
-  socket.identified = true;
-
   const user = await prisma.user.findUnique({
-      where: {
-          token: packet.d.token
-      }
-  });
+    where: {
+      token: token
+    },
+    select: {
+      disabled_until: true,
+      username: true,
+      discriminator: true,
+      avatar: true,
+      premium: true,
+      flags: true,
+      id: true,
+      bot: true,
+      settings: true
+    }
+  })
 
-  if (user == null || user.disabled_until) {
+  if (!user || user.disabled_until) {
     return socket.close(4004, 'Authentication failed');
   }
 
-  const providedIntents = packet.d.intents;
+  ctx.gateway?.debug(`Client identified: ${user.username} (${user.id})`);
 
-  global.gatewayIntentMap.delete(user.id);
-
-  if (providedIntents !== undefined && providedIntents !== null) {
-    global.gatewayIntentMap.set(user.id, Number(providedIntents));
-  }
-
-  let savedStatus = 'online';
-
-  if (user.bot) {
-    user.settings = {
-      status: 'online',
-    };
+  if (intents != null) {
+    ctx.gatewayIntentMap.set(user.id, Number(intents));
   } else {
-    savedStatus = (user.settings as any).status || 'online';
+    ctx.gatewayIntentMap.delete(user.id);
   }
 
-  socket.user = user;
+  const savedStatus = user.bot ? 'online' : ((user.settings as AccountSettings).status || 'online');
+  const finalStatus = (presence?.status === savedStatus) ? presence.status : savedStatus;
 
-  const sesh = new session(
+  socket.user_id = user.id;
+  socket.session = new session(
     globalUtils.generateString(16),
     socket,
-    user,
-    packet.d.token,
+    user, //move to user_id here
+    token,
     false,
     {
       game_id: null,
-      status: savedStatus,
+      status: finalStatus,
       activities: [],
-      user: globalUtils.miniUserObject(socket.user),
+      user: globalUtils.miniUserObject(user as User),
       roles: [],
     },
-    undefined,
+    "gateway",
     undefined,
     undefined,
     socket.apiVersion,
-    packet.d.capabilities ?? socket.client_build_date,
+    capabilities ?? socket.client_build_date,
   );
 
-  socket.session = sesh;
   socket.session.start();
-
   await socket.session.prepareReady();
-
-  const pastPresence = packet.d.presence;
-  let finalStatus = savedStatus;
-
-  if (pastPresence && pastPresence.status && pastPresence.status === savedStatus) {
-    finalStatus = pastPresence.status;
-  } //Only listening if the users settings status is the same as the identify payload - as thats what discord did
-
   await socket.session.updatePresence(finalStatus, null, false, true);
 }
 
-async function handleHeartbeat(socket: any, packet: any) {
+async function handleHeartbeat(socket: WebSocket, packet: GatewayHeartbeatPacket) {
   if (!socket.hb) return;
 
   socket.hb.reset();
   socket.hb.acknowledge(packet.d);
 }
 
-async function handlePresence(socket: any, packet: any) {
-  if (!socket.session) return socket.close(4003, 'Not authenticated');
+async function handlePresence(socket: WebSocket, packet: GatewayPresencePacket) {
+  if (!socket.session || !socket.user_id) {
+    return socket.close(4003, 'Not authenticated');
+  }
 
-  await global.gateway.syncPresence(socket, packet);
+  const allSessions = ctx.userSessions.get(socket.user_id);
+
+  if (!allSessions?.length) return;
+
+  const { d } = packet;
+  const isLegacy = socket.client_build?.includes('2015');
+  const gameField = isLegacy ? d.game_id : d.game;
+
+  let setStatusTo = (!isLegacy && d.status) ? d.status.toLowerCase() : 'online';
+
+  const isIdleRequested = isLegacy ? (d.idle_since != null || d.afk === true) : (d.since != 0 || d.afk === true);
+
+  setStatusTo = isIdleRequested ? 'idle' : 'online';
+  socket.session.last_idle = isIdleRequested ? Date.now() : 0;
+
+  for (const session of allSessions) {
+    if (session.id !== socket.session.id) {
+      session.presence.status = setStatusTo;
+      session.presence.game_id = gameField;
+      session.last_idle = socket.session.last_idle;
+    }
+  }
+
+  await socket.session.updatePresence(setStatusTo, gameField);
 }
 
-async function handleVoiceState(socket: any, packet: any) {
-  if (!socket.session) return socket.close(4003, 'Not authenticated');
+async function handleVoiceState(socket: WebSocket, packet: GatewayVoiceStatePacket) {
+  const { guild_id, channel_id, self_mute, self_deaf } = packet.d;
+  const { user_id, session } = socket;
 
-  const guild_id = packet.d.guild_id;
-  const channel_id = packet.d.channel_id;
-  const self_mute = packet.d.self_mute;
-  const self_deaf = packet.d.self_deaf;
+  let current_guild = socket.current_guild_id;
 
-  if (guild_id === null && channel_id === null) {
-    if (socket.current_guild && socket.current_guild.id && socket.user && socket.user.id) {
-      const voiceStates = global.guild_voice_states.get(socket.current_guild.id);
+  if (!session) {
+    return socket.close(4003, 'Not authenticated');
+  }
 
-      voiceStates.splice(
-        voiceStates.findIndex((x) => x.user_id === socket.user.id),
-        1,
-      );
+  if (!guild_id && !channel_id) {
+    if (current_guild && user_id) {
+      const voiceStates = ctx.guild_voice_states.get(current_guild) || [];
+      const index = voiceStates.findIndex((x) => x.user_id === user_id);
 
-      await dispatcher.dispatchEventInGuild(socket.current_guild, 'VOICE_STATE_UPDATE', {
-        channel_id: channel_id,
-        guild_id: socket.current_guild.id, //must be guild id even if they left the vc and they dont send any guild id
-        user_id: socket.user.id,
-        session_id: socket.session.id,
+      if (index !== -1) {
+        voiceStates.splice(index, 1);
+      }
+
+      await dispatcher.dispatchEventInGuild(current_guild, 'VOICE_STATE_UPDATE', {
+        channel_id: null,
+        guild_id: current_guild,
+        user_id: user_id,
+        session_id: session.id,
         deaf: false,
         mute: false,
-        self_deaf: self_deaf,
-        self_mute: self_mute,
+        self_deaf,
+        self_mute,
         self_video: false,
         suppress: false,
       });
 
-      socket.current_guild = null;
+      socket.current_guild_id = null;
       socket.inCall = false;
-      return;
     }
+    return;
   }
 
-  socket.session.guild_id = guild_id ?? 0;
-  socket.session.channel_id = channel_id ?? 0;
-  socket.session.self_muted = self_mute;
-  socket.session.self_deafened = self_deaf;
+  session.guild_id = guild_id ?? "0";
+  session.channel_id = channel_id ?? "0";
 
-  if (!socket.current_guild) {
-    if (guild_id) {
-      socket.current_guild = await prisma.guild.findUnique({
-        where: {
-          id: guild_id
-        }
-      });
-    }
+  if (!current_guild) {
+    current_guild = guild_id;
   }
 
-  if (socket.session.channel_id != 0 && socket.current_guild) {
-    const channel = socket.current_guild.channels.find((x) => x.id === channel_id);
+  if (session.channel_id != "0" && current_guild) {
+    const channel = await prisma.channel.findUnique({
+      where: {
+        id: socket.session.channel_id
+      },
+      select: {
+        type: true,
+        user_limit: true
+      }
+    });
 
-    if (!channel || channel.type != 2) {
+    if (!channel || channel.type !== ChannelType.VOICE || !channel.user_limit) {
       return;
     }
 
-    if (channel && channel.type === 2 && channel.user_limit > 0) {
-      const testRoom = global.rooms.filter((x) => x.room_id === `${guild_id}:${channel_id}`);
-      const permissionCheck = global.permissions.hasChannelPermissionTo(
-        channel,
-        socket.current_guild,
-        socket.user.id,
+    if (channel.user_limit > 0 && user_id) {
+      const testRoom = ctx.rooms.filter((x) => x.room_id === `${guild_id}:${channel_id}`);
+      const permissionCheck = permissions.hasChannelPermissionTo(
+        session.channel_id,
+        current_guild,
+        user_id,
         'MOVE_MEMBERS',
       );
 
-      if (testRoom && testRoom.length >= channel.user_limit && !permissionCheck) {
+      if (testRoom.length >= channel.user_limit && !permissionCheck) {
         return;
       } //to-do: work on moving members into the channel
     }
   }
 
-  let room = global.rooms.find((x) => x.room_id === `${guild_id}:${channel_id}`);
+  let room = ctx.rooms.find((x) => x.room_id === `${guild_id}:${channel_id}`);
 
-  if (!room) {
-    global.rooms.push({
+  if (!room && guild_id) {
+    ctx.rooms.push({
       room_id: `${guild_id}:${channel_id}`,
       participants: [],
     });
 
-    global.guild_voice_states.set(guild_id, []);
+    ctx.guild_voice_states.set(guild_id, []);
 
-    room = global.rooms.find((x) => x.room_id === `${guild_id}:${channel_id}`);
+    room = ctx.rooms.find((x) => x.room_id === `${guild_id}:${channel_id}`);
   }
 
-  await dispatcher.dispatchEventInGuild(socket.current_guild, 'VOICE_STATE_UPDATE', {
-    channel_id: channel_id,
-    guild_id: guild_id,
-    user_id: socket.user.id,
-    session_id: socket.session.id,
-    deaf: false,
-    mute: false,
-    self_deaf: self_deaf,
-    self_mute: self_mute,
-    self_video: false,
-    suppress: false,
-  });
+  if (current_guild) {
+    await dispatcher.dispatchEventInGuild(current_guild, 'VOICE_STATE_UPDATE', {
+      channel_id: channel_id,
+      guild_id: guild_id,
+      user_id: user_id,
+      session_id: socket.session.id,
+      deaf: false,
+      mute: false,
+      self_deaf: self_deaf,
+      self_mute: self_mute,
+      self_video: false,
+      suppress: false,
+    });
+  }
 
-  if (!room.participants.find((x) => x.user.id === socket.user.id)) {
+  if (room && user_id && guild_id && !room.participants.find((x) => x.user_id === user_id)) {
     room.participants.push({
-      user: globalUtils.miniUserObject(socket.user),
+      user_id: user_id,
       ssrc: globalUtils.generateString(30),
     });
 
-    const voiceStates = global.guild_voice_states.get(guild_id);
+    const voiceStates = ctx.guild_voice_states.get(guild_id);
 
-    if (!voiceStates.find((y) => y.user_id === socket.user.id)) {
+    if (voiceStates && !voiceStates.find((y) => y.user_id === socket.user_id)) {
       voiceStates.push({
-        user_id: socket.user.id,
+        user_id: user_id,
         session_id: socket.session.id,
         guild_id: guild_id,
         channel_id: channel_id,
@@ -227,7 +244,7 @@ async function handleVoiceState(socket: any, packet: any) {
     }
   }
 
-  if (!socket.inCall && socket.current_guild != null) {
+  if (!socket.inCall && current_guild) {
     socket.session.dispatch('VOICE_SERVER_UPDATE', {
       token: globalUtils.generateString(30),
       guild_id: guild_id,
@@ -238,80 +255,179 @@ async function handleVoiceState(socket: any, packet: any) {
   }
 }
 
-async function handleOp12GetGuildMembersAndPresences(socket: any, packet: any) {
-  if (!socket.session) return;
+async function getGuildMembersAndPresences(guild_id: string): Promise<{ members: Member[], presences: any[] }> {
+  try {
+    const guild = await prisma.guild.findUnique({
+      where: { id: guild_id },
+      select: {
+        roles: { select: { role_id: true } }
+      }
+    });
 
-  const guild_ids = packet.d;
+    if (!guild) {
+      return {
+        members: [],
+        presences: [],
+      };
+    }
 
-  if (guild_ids.length === 0) return;
+    const memberRows = await prisma.member.findMany({
+      where: { guild_id: guild_id },
+      include: { user: true }
+    });
 
-  const usersGuilds = socket.session.guilds;
+    const members: Member[] = [];
+    const presences: any[] = [];
 
-  if (usersGuilds.length === 0) return;
+    let offlineCount = 0;
 
-  for (var guild of guild_ids) {
-    const guildObj = usersGuilds.find((x) => x.id === guild);
+    const validRoleIds = new Set(guild.roles.map(r => r.role_id));
 
-    if (!guildObj) continue;
+    for (const row of memberRows) {
+      if (!row.user) continue;
 
-    const op12 = await global.database.op12getGuildMembersAndPresences(guildObj);
+      const member_roles = ((row.roles as string[]) || []).filter(id => validRoleIds.has(id));
+      const member = {
+        user: globalUtils.miniUserObject(row.user as User),
+        nick: row.nick,
+        deaf: row.deaf,
+        mute: row.mute,
+        roles: member_roles,
+        joined_at: row.joined_at,
+      };
 
-    if (op12 == null) continue;
+      const sessions = ctx.userSessions?.get(row.user_id);
+
+      let presence;
+
+      if (sessions && sessions.length > 0) {
+        presence = sessions[sessions.length - 1].presence;
+      } else {
+        presence = {
+          status: 'offline',
+          activities: [],
+          user: member.user,
+        };
+      }
+
+      const isOnline = ['online', 'idle', 'dnd'].includes(presence.status);
+
+      if (isOnline) {
+        members.push(member);
+        presences.push(presence);
+      } else if (offlineCount < 1000) {
+        offlineCount++;
+        members.push(member);
+        presences.push(presence);
+      }
+    }
+
+    return {
+      members: members,
+      presences: presences,
+    };
+  } catch (error) {
+    logText(error, 'error');
+    return { members: [], presences: [] };
+  }
+}
+
+async function handleOp12GetGuildMembersAndPresences(socket: WebSocket, packet: GatewayLazyFetchPacket) {
+  const { user_id, session } = socket;
+  const requested_guild_ids = packet.d;
+
+  if (!session || !requested_guild_ids.length) return;
+
+  const valid_guilds = await prisma.guild.findMany({
+    where: {
+      id: { in: requested_guild_ids },
+      members: {
+        some: {
+          user_id: user_id
+        }
+      }
+    },
+    select: {
+      id: true
+    }
+  });
+
+  const authorized_ids = valid_guilds.map(g => g.id);
+
+  for (const guild_id of authorized_ids) {
+    const op12 = await getGuildMembersAndPresences(guild_id);
+
+    if (!op12) {
+      continue;
+    }
 
     socket.session.dispatch('GUILD_SYNC', {
-      id: guildObj.id,
+      id: guild_id,
       presences: op12.presences,
       members: op12.members,
     });
   }
 }
 
-async function handleOp14GetGuildMemberChunks(socket: any, packet: any) {
+async function handleOp14GetGuildMemberChunks(socket: WebSocket, packet: GatewayMemberChunksPacket) {
   //This new rewritten code was mainly inspired by spacebar if you couldn't tell since their OP 14 is more stable than ours at the moment.
   //TO-DO: add support for shit like INSERT and whatnot (hell)
 
   await lazyRequest.fire(socket, packet);
 }
 
-async function handleResume(socket: any, packet: any) {
+async function handleResume(socket: WebSocket, packet: GatewayResumePacket) {
   const token = packet.d.token;
   const session_id = packet.d.session_id;
 
-  if (!token || !session_id) return socket.close(4000, 'Invalid payload');
+  if (!token || !session_id) {
+    return socket.close(4000, 'Invalid payload');
+  }
 
-  if (socket.session || socket.resumed) return socket.close(4005, 'Cannot resume at this time');
+  if (socket.session || socket.resumed) {
+    return socket.close(4005, 'Cannot resume at this time');
+  }
 
   socket.resumed = true;
 
-  const user2 = await prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: {
       token: token
+    },
+    select: {
+      disabled_until: true,
+      username: true,
+      discriminator: true,
+      avatar: true,
+      premium: true,
+      flags: true,
+      id: true,
+      bot: true,
+      settings: true
     }
-  });
+  })
 
-  if (!user2) {
+  if (!user || user.disabled_until) {
     return socket.close(4004, 'Authentication failed');
   }
 
-  socket.user = user2;
-
-  const session2 = global.sessions.get(session_id);
+  const session2 = ctx.sessions.get(session_id);
 
   if (!session2) {
     const sesh = new session(
       globalUtils.generateString(16),
       socket,
-      socket.user,
-      packet.d.token,
+      user,
+      token,
       false,
       {
         game_id: null,
-        status: socket.user?.settings?.status ?? 'online',
+        status: (user?.settings as AccountSettings).status ?? 'online',
         activities: [],
-        user: globalUtils.miniUserObject(socket.user),
+        user: globalUtils.miniUserObject(user as User),
         roles: [],
       },
-      undefined,
+      "gateway",
       undefined,
       undefined,
       socket.apiVersion,
@@ -325,13 +441,13 @@ async function handleResume(socket: any, packet: any) {
     socket.session = sesh;
   }
 
-  let sesh: any = null;
+  let sesh: Session | null = null; //to-do 
 
   if (!session2) {
     sesh = socket.session;
   } else sesh = session2;
 
-  if (sesh.user.id !== socket.user.id) {
+  if (sesh.user.id !== socket.user_id) {
     return socket.close(4004, 'Authentication failed');
   }
 
@@ -345,20 +461,22 @@ async function handleResume(socket: any, packet: any) {
     return await socket.session.resume(sesh.seq, socket);
   } else {
     sesh.send({
-      op: OPCODES.INVALID_SESSION,
+      op: GatewayOpcode.INVALID_SESSION,
       d: false,
     });
   }
 }
 
-const gatewayHandlers = {
-  [OPCODES.IDENTIFY]: handleIdentify,
-  [OPCODES.HEARTBEAT]: handleHeartbeat,
-  [OPCODES.PRESENCE]: handlePresence,
-  [OPCODES.VOICESTATE]: handleVoiceState,
-  [OPCODES.LAZYFETCH]: handleOp12GetGuildMembersAndPresences,
-  [OPCODES.MEMBERCHUNKS]: handleOp14GetGuildMemberChunks,
-  [OPCODES.RESUME]: handleResume,
+type GatewayHandler = (socket: WebSocket, packet: any) => Promise<void> | void;
+
+const gatewayHandlers: Record<number, GatewayHandler> = {
+  [GatewayOpcode.IDENTIFY]: handleIdentify,
+  [GatewayOpcode.HEARTBEAT]: handleHeartbeat,
+  [GatewayOpcode.PRESENCE_UPDATE]: handlePresence,
+  [GatewayOpcode.VOICE_STATE_UPDATE]: handleVoiceState,
+  [GatewayOpcode.LAZY_UPDATE]: handleOp12GetGuildMembersAndPresences,
+  [GatewayOpcode.REQUEST_GUILD_MEMBERS]: handleOp14GetGuildMemberChunks,
+  [GatewayOpcode.RESUME]: handleResume,
 };
 
-export { gatewayHandlers, OPCODES };
+export { gatewayHandlers };

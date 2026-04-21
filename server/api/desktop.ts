@@ -70,7 +70,7 @@ router.use(
   }),
 );
 
-router.get('/api/updates/windows/distributions/app/manifests/latest', async (req: any, res: Response) => {
+router.get('/api/updates/windows/distributions/app/manifests/latest', async (req: Request, res: Response) => {
   let updateInfo: any; 
   let moduleVersions: any;
   

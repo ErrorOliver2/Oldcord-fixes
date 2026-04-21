@@ -13,12 +13,6 @@ datasource db {
   provider = "postgresql"
 }
 
-model InstanceInfo {
-  version Float @id
-
-  @@map("instance_info")
-}
-
 model User {
   id                String             @id
   username          String?
@@ -35,9 +29,7 @@ model User {
   avatar            String?
   bot               Boolean?           @default(false)
   flags             Int?               @default(0)
-  registration_ip   String?
   email_token       String?
-  last_login_ip     String?
   private_channels  Json?              @default("[]")
   settings          Json?              @default("{\"show_current_game\":false,\"inline_attachment_media\":true,\"inline_embed_media\":true,\"render_embeds\":true,\"render_reactions\":true,\"sync\":true,\"theme\":\"dark\",\"enable_tts_command\":true,\"message_display_compact\":false,\"locale\":\"en-US\",\"convert_emoticons\":true,\"restricted_guilds\":[],\"allow_email_friend_request\":false,\"friend_source_flags\":{\"all\":true},\"developer_mode\":true,\"guild_positions\":[],\"detect_platform_accounts\":false,\"status\":\"online\"}")
   guild_settings    Json?              @default("[]")
@@ -52,18 +44,27 @@ model User {
   guilds            Guild[]
   bans              Ban[]
   connectedAccounts ConnectedAccount[]
+  webhooks Webhook[]
   messages          Message[]
+  sentRelationships     Relationship[] @relation("RelationshipSender")
+  receivedRelationships Relationship[] @relation("RelationshipReceiver")
+  createdInvites Invite[] @relation("UserInvites")
 
   @@map("users")
 }
 
 model Relationship {
-  user_id_1 String?
-  type      Int?
-  user_id_2 String?
+  user_id_1 String
+  user_id_2 String
+  type      Int      @default(0)
+  createdAt DateTime @default(now())
+ 
+  sender    User     @relation("RelationshipSender", fields: [user_id_1], references: [id])
+  receiver  User     @relation("RelationshipReceiver", fields: [user_id_2], references: [id])
+
+  @@id([user_id_1, user_id_2])
 
   @@map("relationships")
-  @@ignore
 }
 
 model UserNote {
@@ -142,8 +143,8 @@ model Channel {
   user_limit            Int?     @default(0)
   bitrate               Int?     @default(64000)
   position              Int?     @default(0)
-  guild                 Guild?   @relation(fields: [guild_id], references: [id])
   recipients            User[]
+  invites               Invite[]
 
   @@map("channels")
 }
@@ -171,12 +172,7 @@ model Guild {
   premium_tier                  Int?      @default(0)
   premium_subscription_count    Int?      @default(0)
   premium_progress_bar_enabled  Boolean?  @default(false)
-  invites                       Invite[]
-  channels                      Channel[]
-  members                       Member[]
-  roles                         Role[]
   owner                         User      @relation(fields: [owner_id], references: [id])
-  bans                          Ban[]
 
   @@map("guilds")
 }
@@ -219,8 +215,6 @@ model Role {
   permissions Int     @default(104193089)
   position    Int     @default(0)
 
-  guild Guild @relation(fields: [guild_id], references: [id])
-
   @@map("roles")
 }
 
@@ -234,7 +228,6 @@ model Member {
   mute      Boolean @default(false)
 
   user  User  @relation(fields: [user_id], references: [id])
-  guild Guild @relation(fields: [guild_id], references: [id])
 
   @@id([guild_id, user_id])
   @@map("members")
@@ -252,7 +245,8 @@ model Invite {
   maxAge     Int?     @default(0)
   xkcdpass   Boolean? @default(false)
   createdAt  String?
-  guild      Guild?   @relation(fields: [guild_id], references: [id])
+  channel   Channel? @relation(fields: [channel_id], references: [id])
+  inviter    User?    @relation("UserInvites", fields: [inviter_id], references: [id])
 
   @@map("invites")
 }
@@ -306,19 +300,17 @@ model Attachment {
 }
 
 model Widget {
-  guild_id   String?
+  guild_id   String @id
   channel_id String?
   enabled    Boolean? @default(false)
 
   @@map("widgets")
-  @@ignore
 }
 
 model Ban {
   guild_id String
   user_id  String
 
-  guild Guild @relation(fields: [guild_id], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@id([guild_id, user_id])
@@ -326,13 +318,14 @@ model Ban {
 }
 
 model Webhook {
+  id         String  @id
   guild_id   String?
   channel_id String?
-  id         String  @id
   token      String?
   avatar     String?
   name       String? @default("Captain Hook")
-  creator_id String?
+  creator_id String
+  creator    User    @relation(fields: [creator_id], references: [id])
 
   @@map("webhooks")
 }

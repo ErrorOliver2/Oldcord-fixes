@@ -1,20 +1,24 @@
 import rateLimit from 'express-rate-limit';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
-
 import errors from './errors.ts';
 import globalUtils from './globalutils.ts';
 import { logText } from './logger.ts';
 import { getTimestamps } from './wayback.ts';
-import type { NextFunction } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../prisma.ts';
+import { AccountService } from '../api/services/accountService.ts';
+import type { Account } from '../types/account.ts';
+import { GuildService } from '../api/services/guildService.ts';
 
 const config = globalUtils.config;
-
 const spacebarApis = ['/.well-known/spacebar', '/policies/instance/domains'];
-
 const cached404s = {};
 
-function corsMiddleware(req: any, res: any, next: any) {
+/**
+ * Returns a cors middleware for the route, this handles roughly whether other websites can make requests to our API on your behalf.
+ */
+
+function corsMiddleware(req: Request, res: Response, next: NextFunction) {
   // Stolen from spacebar because of allowing fermi/flicker support
   res.set('Access-Control-Allow-Credentials', 'true');
   res.set('Access-Control-Allow-Headers', req.header('Access-Control-Request-Headers') || '*');
@@ -31,7 +35,11 @@ function corsMiddleware(req: any, res: any, next: any) {
   next();
 }
 
-function apiVersionMiddleware(req: any, _, next: any) {
+/**
+ * Returns a valid api version on the routes via an easy to use middleware.. just makes sure it's not being passed some incorrect value.
+ */
+
+function apiVersionMiddleware(req: Request, _res: Response, next: NextFunction) {
   const versionRegex = /^\/v(\d+)/;
   const match = req.path.match(versionRegex);
 
@@ -49,7 +57,11 @@ function apiVersionMiddleware(req: any, _, next: any) {
   next();
 }
 
-async function clientMiddleware(req: any, res: any, next: any) {
+/**
+ * This handles routes the clients can access without authenticating or providing cookies. It also handles setting up valid selector & release_date cookies for use in later routes.
+ */
+
+async function clientMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
     if (spacebarApis.includes(req.path)) return next();
 
@@ -67,7 +79,7 @@ async function clientMiddleware(req: any, res: any, next: any) {
       global.full_url.includes('localhost') || global.full_url.includes('127.0.0.1');
     const isReqLocal = reqHost.includes('localhost') || reqHost.includes('127.0.0.1');
 
-    const isBrowser = /Mozilla|Chrome|Safari|Firefox|Edge/i.test(req.headers['user-agent']);
+    const isBrowser = /Mozilla|Chrome|Safari|Firefox|Edge/i.test(req.headers['user-agent'] as string);
     let isSameHost = false;
 
     if (global.full_url === reqHost) {
@@ -113,6 +125,8 @@ async function clientMiddleware(req: any, res: any, next: any) {
     cookies = req.cookies;
 
     if (!globalUtils.addClientCapabilities(cookies['release_date'], req)) {
+      logText('failed to add', 'error');
+      console.log("xxx 4");
       return res.redirect('/selector');
     }
 
@@ -124,11 +138,18 @@ async function clientMiddleware(req: any, res: any, next: any) {
   }
 }
 
+/**
+ * This handles rate-limiting on routes.
+ * @param max Max number of requests.
+ * @param windowMs Timeframe in milliseconds before the ratelimit expires.
+ * @param ignore_trusted There is a trusted list of user IDs which are exempt from ratelimits usually. This will control whether it ignores them from being ratelimited (true) or not. (false)
+ */
+
 function rateLimitMiddleware(max: number, windowMs: number, ignore_trusted = true) {
   const rL = rateLimit({
     windowMs: windowMs,
     max: max,
-    handler: (req: any, res: any, next: NextFunction) => {
+    handler: (req: Request, res: Response, next: NextFunction) => {
       if (!config.ratelimit_config.enabled) {
         return next();
       }
@@ -147,7 +168,7 @@ function rateLimitMiddleware(max: number, windowMs: number, ignore_trusted = tru
     },
   });
 
-  return function (req: any, res: any, next: any) {
+  return function (req: Request, res: Response, next: any) {
     rL(req, res, (err) => {
       if (err) return next(err);
       next();
@@ -155,16 +176,20 @@ function rateLimitMiddleware(max: number, windowMs: number, ignore_trusted = tru
   };
 }
 
-async function assetsMiddleware(req: any, res: any) {
+/**
+ * Assets middleware, handles downloading emojis, etc from oldcord cdn then wayback machine if not found. It automatically caches 404 also.
+ */
+
+async function assetsMiddleware(req: Request, res: Response) {
   try {
     globalUtils.addClientCapabilities(req.cookies['release_date'], req);
 
-    if (config.cache404s && cached404s[req.params.asset] == 1) {
+    if (cached404s[req.params.asset as string] == 1) {
       return res.status(404).send('File not found');
     }
 
     if (req.params.asset.includes('.map')) {
-      cached404s[req.params.asset] = 1;
+      cached404s[req.params.asset as string] = 1;
 
       return res.status(404).send('File not found');
     }
@@ -178,35 +203,24 @@ async function assetsMiddleware(req: any, res: any) {
     let doWayback = true;
     let isOldBucket = false;
 
-    if (
-      (req.client_build_date.getFullYear() === 2018 && req.client_build_date.getMonth() >= 6) ||
-      req.client_build_date.getFullYear() >= 2019
-    ) {
+    if (req.client_build_date && ((req.client_build_date?.getFullYear() === 2018 && req.client_build_date.getMonth() >= 6) || req.client_build_date?.getFullYear() >= 2019)) {
       doWayback = false;
     } //check if older than june 2018 to request from cdn
 
-    async function handleRequest(doWayback) {
-      let timestamp = null;
+    async function handleRequest(doWayback: any) {
+      let timestamp;
       let snapshot_url = `https://cdn.oldcordapp.com/assets/${req.params.asset}`; //try download from oldcord cdn first
 
       if (doWayback) {
-        let timestamps: any = await getTimestamps(`https://discordapp.com/assets/${req.params.asset}`);
+        let timestamps = await getTimestamps(`https://discordapp.com/assets/${req.params.asset}`);
 
-        if (
-          timestamps == null ||
-          timestamps.first_ts.includes('1999') ||
-          timestamps.first_ts.includes('2000')
-        ) {
+        if (timestamps == null) {
           timestamps = await getTimestamps(
             `https://d3dsisomax34re.cloudfront.net/assets/${req.params.asset}`,
           );
 
-          if (
-            timestamps == null ||
-            timestamps.first_ts.includes('1999') ||
-            timestamps.first_ts.includes('2000')
-          ) {
-            cached404s[req.params.asset] = 1;
+          if (timestamps == null) {
+            cached404s[req.params.asset as string] = 1;
 
             return res.status(404).send('File not found');
           }
@@ -228,21 +242,13 @@ async function assetsMiddleware(req: any, res: any) {
       const r = await fetch(snapshot_url);
 
       if (!r.ok) {
-        cached404s[req.params.asset] = 1;
+        if (r.status === 404 && !doWayback) {
+          doWayback = true;
 
-        return res.status(404).send('File not found');
-      }
+          return await handleRequest(doWayback);
+        }
 
-      if (r.status === 404 && !doWayback) {
-        doWayback = true;
-
-        return await handleRequest(doWayback);
-      }
-
-      if (r.status >= 400) {
-        logText(`!! Error saving asset: ${snapshot_url} - reports ${r.status} !!`, 'debug');
-
-        cached404s[req.params.asset] = 1;
+        cached404s[req.params.asset as string] = 1;
 
         return res.status(404).send('File not found');
       }
@@ -258,8 +264,9 @@ async function assetsMiddleware(req: any, res: any) {
 
       logText(`[LOG] Saved ${req.params.asset} from ${snapshot_url} successfully.`, 'debug');
 
-      res.writeHead(r.status, { 'Content-Type': r.headers.get('content-type') });
-      res.end(buffer);
+      res.writeHead(r.status, { 'Content-Type': r.headers.get('content-type') as string });
+
+      return res.end(buffer);
     }
 
     await handleRequest(doWayback);
@@ -270,20 +277,21 @@ async function assetsMiddleware(req: any, res: any) {
   }
 }
 
-function staffAccessMiddleware(privilege_needed) {
-  return async function (req, res, next) {
-    try {
-      const account = req.account;
+/**
+ * Blockades (haha funny) certain routes to a level of privilege necessary to individual staff users.
+ * @param privilege_needed The level of staff privilege needed to use this route.
+ */
 
-      if (!account) {
-        return res.status(401).json(errors.response_401.UNAUTHORIZED);
-      }
+function staffAccessMiddleware(privilege_needed: number) {
+  return async function (req: Request, res: Response, next: NextFunction) {
+    try {
+      const account = req.account!!;
 
       if (!req.is_staff) {
         return res.status(401).json(errors.response_401.UNAUTHORIZED);
       }
 
-      if (req.staff_details.privilege < privilege_needed) {
+      if (req.staff_details!!.privilege < privilege_needed) {
         return res.status(401).json(errors.response_401.UNAUTHORIZED);
       }
 
@@ -304,7 +312,11 @@ function staffAccessMiddleware(privilege_needed) {
   };
 }
 
-async function authMiddleware(req, res, next) {
+/**
+ * This middleware is used to ensure users requesting to a route must be authenticated unless they hit a strictly public route like GET requests to webhooks and invites.
+ */
+
+async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
     if (req.url.includes('/webhooks/') || (req.url.includes('/invite/') && req.method === 'GET')) {
       return next();
@@ -326,20 +338,11 @@ async function authMiddleware(req, res, next) {
       return res.status(404).json(errors.response_404.NOT_FOUND); //discord's old api used to just return this if you tried it unauthenticated. so i guess, return that too?
     }
 
-    const accounts = await prisma.user.findMany({
-      where: {
-        token: token
-      },
-      include: {
-        staff: true
-      }
-    });
+    const account = await AccountService.getByToken(token) as Account;
 
-    if (accounts.length === 0) {
+    if (!account) {
       return res.status(401).json(errors.response_401.UNAUTHORIZED);
     }
-
-    let account = accounts[0];
 
     if (account.disabled_until) {
       req.cannot_pass = true;
@@ -364,7 +367,7 @@ async function authMiddleware(req, res, next) {
           userAgent,
         );
 
-        req.cannot_pass = xSuperProperties && userAgent && !validSuperProps;
+        req.cannot_pass = xSuperProperties !== undefined && userAgent !== undefined && !validSuperProps;
       } catch {}
     }
 
@@ -382,8 +385,13 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-function instanceMiddleware(flag_check) {
-  return function (req, res, next) {
+/**
+ * Prevents the user from requesting further if the instance, or they do not meet a certain flag.
+ * @param flag_check The flag to check for.
+ */
+
+function instanceMiddleware(flag_check: string) {
+  return function (req: Request, res: Response, next: NextFunction) {
     const check = config.instance.flags.includes(flag_check);
 
     if (check) {
@@ -405,7 +413,11 @@ function instanceMiddleware(flag_check) {
   };
 }
 
-async function guildMiddleware(req, res, next) {
+/**
+ * This middleware handles cases if guilds do not exist, or if the sender is not authorized to make average requests to that guild.
+ */
+
+async function guildMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!req.params.guildid) {
     return next();
   }
@@ -426,7 +438,7 @@ async function guildMiddleware(req, res, next) {
     return next();
   }
 
-  const member = guild.members.find((y) => y.id == sender.id);
+  const member = guild.members?.find((y) => y.id == sender.id);
 
   if (!member) {
     return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
@@ -435,13 +447,12 @@ async function guildMiddleware(req, res, next) {
   next();
 }
 
-async function userMiddleware(req, res, next) {
-  const account = req.account;
+/**
+ * User middleware is used to check whether the userid in the params is valid and they are in a guild with them in order to make the request. 
+ */
 
-  if (!account) {
-    return res.status(401).json(errors.response_401.UNAUTHORIZED);
-  }
-
+async function userMiddleware(req: Request, res: Response, next: NextFunction) {
+  const account = req.account!!;
   const user = req.user;
 
   if (!user) {
@@ -484,7 +495,11 @@ async function userMiddleware(req, res, next) {
   next();
 }
 
-async function channelMiddleware(req, res, next) {
+/**
+ * Channel Middleware is necessary to add a channel to a channelid param, and a guild if there isn't one already. Afterwards, it checks if they can READ_MESSAGES in that channel requested before allowing them to continue.
+ */
+
+async function channelMiddleware(req: Request, res: Response, next: NextFunction) {
   const channel = req.channel;
 
   if (!channel) {
@@ -505,26 +520,25 @@ async function channelMiddleware(req, res, next) {
     return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
   }
 
-  if (!req.guild && channel.id.includes('12792182114301050')) return next();
+  if (!req.guild && channel.id.includes('12792182114301050')) {
+    return next();
+  }
 
   if (!req.guild) {
-    req.guild = await prisma.guild.findUnique({
-      where: { id: req.params.guildid },
-      include: { members: true, roles: true }
-    });
+    req.guild = await GuildService.getById(req.params.guildid as string);
   }
 
   if (req.is_staff) {
     return next();
   }
 
-  const member = req.guild.members.find((y) => y.id == sender.id);
+  const member = req.guild.members?.find((y) => y.id == sender.id);
 
   if (member == null) {
     return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
   }
 
-  const gCheck = global.permissions.hasGuildPermissionTo(
+  const gCheck = permissions.hasGuildPermissionTo(
     req.guild,
     member.id,
     'READ_MESSAGES',
@@ -535,7 +549,7 @@ async function channelMiddleware(req, res, next) {
     return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
   }
 
-  const pCheck = global.permissions.hasChannelPermissionTo(
+  const pCheck = permissions.hasChannelPermissionTo(
     req.channel,
     req.guild,
     member.id,
@@ -549,13 +563,14 @@ async function channelMiddleware(req, res, next) {
   next();
 }
 
-function guildPermissionsMiddleware(permission) {
-  return async function (req, res, next) {
-    const sender = req.account;
+/**
+ * Checks whether the requester has permission to use a route in a guild.
+ * @param permission The permission string to check for in a given guild.
+ */
 
-    if (sender == null) {
-      return res.status(401).json(errors.response_401.UNAUTHORIZED);
-    }
+function guildPermissionsMiddleware(permission: string) {
+  return async function (req: Request, res: Response, next: NextFunction) {
+    const sender = req.account!!;
 
     if (!req.params.guildid) {
       return next();
@@ -567,7 +582,7 @@ function guildPermissionsMiddleware(permission) {
       return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
     }
 
-    if (guild.owner_id == sender.id || (req.is_staff && req.staff_details.privilege >= 3)) {
+    if (guild.owner_id == sender.id || (req.is_staff && req.staff_details && req.staff_details.privilege >= 3)) {
       if (!sender.mfa_enabled && global.config.mfa_required_for_admin && req.is_staff) {
         return res.status(403).json(errors.response_403.MFA_REQUIRED); //move this to its own error code
       }
@@ -575,7 +590,7 @@ function guildPermissionsMiddleware(permission) {
       return next();
     }
 
-    const check = await global.permissions.hasGuildPermissionTo(
+    const check = await permissions.hasGuildPermissionTo(
       req.guild,
       sender.id,
       permission,
@@ -590,13 +605,31 @@ function guildPermissionsMiddleware(permission) {
   };
 }
 
-function channelPermissionsMiddleware(permission) {
-  return async function (req, res, next) {
-    const sender = req.account;
+/**
+ * Sets up caching on a route, this configures the cache-control header properly so CDNs and browsers know what to do.
+ * @param maxAge Maximum age (in seconds) the cache will last until it's stale.
+ * @param mode Whether the cache is shared (public), or not (private). For API requests, it is recommended this is private.
+ * @param immutable Whether the data is not going to be updated even while it's fresh. (Perfect for data pulled from Oldcord/Wayback machine).
+ */
 
-    if (sender == null) {
-      return res.status(401).json(errors.response_401.UNAUTHORIZED);
-    }
+function cacheForMiddleware(maxAge: number, mode = "private", immutable = false) {
+  //Cache-Control: public, max-age=604800
+  //Cache-Control: public, max-age=604800, immutable
+
+  return async function (_req: Request, res: Response, next: NextFunction) {
+    res.setHeader('Cache-Control', `${mode}, max-age=${maxAge}, ${immutable ? 'immutable' : ''}`)
+    return next();
+  }
+}
+
+/**
+ * Channel Permission Middleware verifies if the requester can do something in a certain channel. This is relating to channel overwrites mostly.
+ * @param permission The permission to check for in a given text channel.
+ */
+
+function channelPermissionsMiddleware(permission: string) {
+  return async function (req: Request, res: Response, next: NextFunction) {
+    const sender = req.account!!;
 
     if (permission == 'MANAGE_MESSAGES' && req.params.messageid) {
       const message = req.message;
@@ -605,7 +638,7 @@ function channelPermissionsMiddleware(permission) {
         return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
       }
 
-      if (req.is_staff && req.staff_details.privilege >= 3) {
+      if (req.is_staff && req.staff_details && req.staff_details.privilege >= 3) {
         if (!sender.mfa_enabled && global.config.mfa_required_for_admin) {
           return res.status(403).json(errors.response_403.MFA_REQUIRED);
         }
@@ -624,7 +657,7 @@ function channelPermissionsMiddleware(permission) {
       return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
     }
 
-    if (req.is_staff && req.staff_details.privilege >= 3) {
+    if (req.is_staff && req.staff_details && req.staff_details.privilege >= 3) {
       if (!sender.mfa_enabled && global.config.mfa_required_for_admin) {
         return res.status(403).json(errors.response_403.MFA_REQUIRED);
       }
@@ -635,7 +668,7 @@ function channelPermissionsMiddleware(permission) {
     if (channel.id.includes('12792182114301050')) return next();
 
     if (!channel.guild_id && channel.recipients) {
-      if (permission == 'MANAGE_MESSAGES' && !channel.recipients.includes(sender.id)) {
+      if (permission == 'MANAGE_MESSAGES' && !channel.recipients.includes(sender)) {
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
       }
 
@@ -679,8 +712,8 @@ function channelPermissionsMiddleware(permission) {
 
           if (!friends) {
             const hasAllowedGuild = sharedGuilds.some((guild) => {
-              const senderAllows = !sender.settings.restricted_guilds.includes(guild.id);
-              const recipientAllows = !(other.settings! as any).restricted_guilds.includes(guild.id);
+              const senderAllows = !sender.settings?.restricted_guilds!.includes(guild.id);
+              const recipientAllows = !(other.settings as any).restricted_guilds.includes(guild.id);
 
               return senderAllows && recipientAllows;
             });
@@ -700,7 +733,7 @@ function channelPermissionsMiddleware(permission) {
       return next();
     }
 
-    const check = global.permissions.hasChannelPermissionTo(
+    const check = permissions.hasChannelPermissionTo(
       channel,
       req.guild,
       sender.id,
@@ -729,4 +762,5 @@ export {
   rateLimitMiddleware,
   staffAccessMiddleware,
   userMiddleware,
+  cacheForMiddleware,
 };

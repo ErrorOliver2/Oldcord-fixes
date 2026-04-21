@@ -1,11 +1,9 @@
 import { Router } from 'express';
-
 import { logText } from '../helpers/logger.ts';
 const router = Router({ mergeParams: true });
 import { response_500 } from '../helpers/errors.ts';
 import { rateLimitMiddleware } from '../helpers/middlewares.ts';
-import { middleware } from '../helpers/watchdog.ts';
-import type { Response } from "express";
+import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import { generate } from '../helpers/snowflake.ts';
 
@@ -15,12 +13,7 @@ router.post(
     global.config.ratelimit_config.reports.maxPerTimeFrame,
     global.config.ratelimit_config.reports.timeFrame,
   ),
-  middleware(
-    global.config.ratelimit_config.reports.maxPerTimeFrame,
-    global.config.ratelimit_config.reports.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const valid_problems = [
         'Child Sexual Abuse Material (CSAM)',

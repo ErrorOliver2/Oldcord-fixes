@@ -46,7 +46,7 @@ class Snowflake {
     return res;
   }
 
-  static isValid(snowflake: string, maxAge: any = null): boolean {
+  static isValid(snowflake: string, maxAge: number | null = null): boolean {
     if (!/^\d+$/.test(snowflake)) return false;
     if (snowflake.length < 11) return false;
 

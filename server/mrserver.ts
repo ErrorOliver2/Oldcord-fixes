@@ -1,127 +1,146 @@
 import { WebSocketServer } from 'ws';
+import type { WebSocket } from "ws";
 
 import { mrHandlers, OPCODES } from './handlers/mr.ts';
 import { logText } from './helpers/logger.ts';
 import { type GatewayPayload, GatewayPayloadSchema } from './types/gateway.ts';
+import type { IncomingMessage } from 'node:http';
+import { EventEmitter } from 'node:events';
 
-// TODO: Replace all String() or "as type" conversions with better ones
+const HEARTBEAT_INTERVAL = 41250;
+const TIMEOUT_INTERVAL = 65000;
 
-const mrServer = {
-  port: null as number | null,
-  debug_logs: false,
-  servers: new Map(),
-  emitter: null,
-  signalingServer: null as WebSocketServer | null,
-  debug(message) {
-    if (!this.debug_logs) {
-      return;
+interface MediaServerNode {
+  socket: WebSocket;
+  port: number;
+  public_ip: string;
+  seen_at: number;
+}
+
+export interface MediaServer {
+  ip: string;
+  socket: WebSocket;
+  port: number;
+}
+
+export class MediaRelayServer extends EventEmitter {
+  private signalingServer: WebSocketServer | null = null;
+  private debugLogs: boolean = false;
+  public servers = new Map<string, MediaServerNode>();
+
+  constructor() {
+    super();
+  }
+
+  public debug(message: string) {
+    if (this.debugLogs) {
+      logText(message, 'MR_SIGNALING_SERVER');
     }
+  }
 
-    logText(message, 'MR_SIGNALING_SERVER');
-  },
-  getRandomMediaServer() {
-    const serverEntries = Array.from(this.servers.entries());
+  public getRandomMediaServer(): MediaServer | null {
+    const nodes = Array.from(this.servers.values());
 
-    if (serverEntries.length === 0) {
+    if (nodes.length === 0) {
       return null;
     }
 
-    const randomIndex = Math.floor(Math.random() * serverEntries.length);
-    const randomEntry = serverEntries[randomIndex];
-    const ip = randomEntry[0];
-    const serverObject = randomEntry[1];
-
+    const randomNode = nodes[Math.floor(Math.random() * nodes.length)];
+    
     return {
-      ip: ip,
-      socket: serverObject.socket,
-      port: serverObject.port,
+      ip: randomNode.public_ip,
+      socket: randomNode.socket,
+      port: randomNode.port,
     };
-  },
-  async handleClientConnect(socket) {
-    this.debug(`Media server has connected`);
+  }
 
-    socket.send(
-      JSON.stringify({
-        op: OPCODES.HEARTBEAT_INFO,
-        d: {
-          heartbeat_interval: 41250,
-        },
-      }),
-    );
+  private setupHeartbeat(socket: WebSocket) {
+    const clear = () => {
+      if (socket.hb?.timeout) {
+        clearTimeout(socket.hb.timeout);
+      }
+    };
 
-    socket.hb = {
-      timeout: setTimeout(
-        async () => {
+    const reset = () => {
+      clear();
+
+      if (socket.hb?.timeout) {
+        socket.hb.timeout = setTimeout(() => {
           this.handleClientClose(socket, true);
-        },
-        45 * 1000 + 20 * 1000,
-      ),
-      reset: () => {
-        if (socket.hb.timeout != null) {
-          clearInterval(socket.hb.timeout);
-        }
-
-        socket.hb.timeout = setTimeout(
-          async () => {
-            this.handleClientClose(socket, true);
-          },
-          45 * 1000 + 20 * 1000,
-        );
-      },
-      acknowledge: (d) => {
-        socket.send(
-          JSON.stringify({
-            op: OPCODES.HEARTBEAT_ACK,
-            d: d,
-          }),
-        );
-      },
+        }, TIMEOUT_INTERVAL);
+      }
     };
 
+    return { reset, clear };
+  }
+
+  public handleClientConnect(socket: WebSocket, _req: IncomingMessage) {
+    this.debug(`A new Media Server node is attempting to connect`);
+
+    const hb = this.setupHeartbeat(socket);
+
+    hb.reset();
+
+    socket.send(JSON.stringify({
+      op: OPCODES.HEARTBEAT_INFO,
+      d: { heartbeat_interval: HEARTBEAT_INTERVAL },
+    }));
+
+    socket.on('message', (data) => this.handleClientMessage(socket, data, hb.reset));
     socket.on('close', () => this.handleClientClose(socket));
-    socket.on('message', (data) => this.handleClientMessage(socket, data));
-  },
-  async handleClientClose(socket, timedOut = false) {
-    if (socket === null) {
-      return;
-    }
+    socket.on('error', (err) => this.debug(`Node socket error: ${err.message}`));
+  }
 
-    if (timedOut) {
-      this.debug(`!! A MEDIA SERVER HAS TIMED OUT - CHECK THE SERVER ASAP`);
-    }
-
-    this.debug(`Lost connection to a media server -> Removing from store...`);
-
-    this.servers.delete(socket.public_ip);
-    socket = null;
-  },
-  async handleClientMessage(socket, data) {
+  private async handleClientMessage(socket: WebSocket, data: any, resetHb: () => void) {
     try {
-      const raw_data = Buffer.from(data).toString('utf-8');
-      const packet: GatewayPayload = GatewayPayloadSchema.parse(JSON.parse(raw_data));
+      resetHb();
+      const rawData = data.toString();
+      const packet: GatewayPayload = GatewayPayloadSchema.parse(JSON.parse(rawData));
 
-      this.debug(`Incoming -> ${raw_data}`);
+      this.debug(`Incoming Media server node OP -> ${packet.op}`);
 
-      await mrHandlers[packet.op]?.(socket, packet);
+      await mrHandlers[packet.op]?.(socket, packet as any);
     } catch (error) {
-      logText(error, 'error');
+      logText(`MR Payload Error: ${error}`, 'error');
 
       socket.close(4000, 'Invalid payload');
     }
-  },
-  start(server, port, debug_logs) {
-    this.port = port;
-    this.debug_logs = debug_logs;
-    this.signalingServer = new WebSocketServer({
-      server: server,
-    });
+  }
+  
+  public handleClientClose(socket: WebSocket, timedOut = false) {
+    if (timedOut) {
+      this.debug(`!! A MEDIA SERVER HAS TIMED OUT - CHECK NODE AT ${socket.public_ip} !!`);
 
-    this.signalingServer.on('listening', async () => {
-      this.debug(`Server up on port ${this.port}`);
-    });
+      socket.close(4009, 'Heartbeat timeout');
+    }
 
-    this.signalingServer.on('connection', this.handleClientConnect.bind(this));
-  },
-};
+    if (socket.hb?.timeout) {
+      clearTimeout(socket.hb.timeout);
+    }
 
-export default mrServer;
+    if (socket.public_ip) {
+      this.debug(`Removing media server ${socket.public_ip} from pool.`);
+      this.servers.delete(socket.public_ip);
+      this.emit('node_disconnected', socket.public_ip);
+    }
+  }
+
+  public registerNode(ip: string, port: number, socket: any) {
+    socket.public_ip = ip;
+    socket.port = port;
+
+    this.servers.set(ip, { socket, port, public_ip: ip, seen_at: 0 });
+
+    this.debug(`Media Server ${ip}:${port} is now active o7 and available for relay.`);
+  }
+
+  public start(server: any, debugLogs = false) {
+    this.debugLogs = debugLogs;
+    this.signalingServer = new WebSocketServer({ server });
+    this.signalingServer.on('connection', (ws, req) => this.handleClientConnect(ws, req));
+
+    this.debug(`Media Relay Signaling service started.`);
+  }
+}
+
+export default new MediaRelayServer();

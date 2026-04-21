@@ -1,188 +1,234 @@
 import udp from 'dgram';
 import sodium from 'libsodium-wrappers';
-
-import { OPCODES } from './handlers/rtc.ts';
 import { logText } from './helpers/logger.ts';
+import { UdpPacketType, UdpPacketTypeByLength, type UdpDiscoveryPacket, type UdpPacket, type UdpVoicePacket } from './types/udp.ts';
+import { EventEmitter } from 'node:events';
 
-// TODO: Replace all String() or "as type" conversions with better ones
+const DEFAULT_ENCRYPTION_MODE = "xsalsa20_poly1305";
+const DEFAULT_ENCRYPTION_KEY = [
+  211, 214, 237, 8, 221, 92, 86, 132, 167, 57, 17, 71, 189, 169, 224, 211, 115, 17, 191,
+  82, 96, 98, 107, 155, 92, 72, 52, 246, 52, 109, 142, 194,
+];
 
-const server = udp.createSocket('udp4');
+export class UdpServer extends EventEmitter {
+  private socket: udp.Socket;
+  private debugLogs: boolean = false;
 
-const udpServer = {
-  server: null as udp.Socket | null,
-  port: null as number | null,
-  debug_logs: false,
-  clients: new Map(),
-  encryptionsMap: new Map(),
-  debug(message) {
-    if (!this.debug_logs) {
+  public clients = new Map();
+  public encryptionsMap = new Map();
+
+  constructor() {
+    super();
+
+    this.socket = udp.createSocket('udp4');
+    this.setupListeners();
+  }
+
+  private debug(message: string) {
+    if (this.debugLogs) {
+      logText(message, 'UDP_SERVER');
+    }
+  }
+
+  private setupListeners() {
+    this.socket.on('listening', () => {
+      const addr = this.socket.address();
+
+      this.debug(`Ready on ${addr.address}:${addr.port}`);
+    });
+
+    this.socket.on('error', (err) => {
+      this.debug(`Server error: ${err.stack}`);
+
+      this.socket.close();
+    });
+
+    this.socket.on('message', (msg, info) => this.handleIncoming(msg, info));
+  }
+
+  private ensureSession(ssrc: number, info: udp.RemoteInfo) {
+    let session = this.clients.get(ssrc);
+
+    if (!session) {
+      let encryption = this.encryptionsMap.get(ssrc);
+
+      encryption ??= {
+        mode: DEFAULT_ENCRYPTION_MODE,
+        key: DEFAULT_ENCRYPTION_KEY,
+      };
+
+      const sesh = {
+        ip_addr: info.address,
+        ip_port: info.port,
+        encryption_mode: encryption.mode,
+        encryption_key: encryption.key,
+      };
+
+      this.clients.set(ssrc, sesh);
+    }
+  }
+
+  public parseUdpPacket(msg: Buffer<ArrayBuffer>, info: udp.RemoteInfo): UdpPacket | null {
+    if (msg.length < UdpPacketTypeByLength.MIN_LENGTH) {
+      this.debug(`Message length check failed, packet had no ssrc.`);
+
+      return null;
+    }
+
+    const ssrc = msg.readUInt32BE(0);
+
+    if (msg.length === UdpPacketTypeByLength.IP_DISCOVERY) {
+      return {
+        type: UdpPacketType.Discovery,
+        s: ssrc,
+        d: {
+          address: info.address,
+          port: info.port
+        }
+      };
+    } else if (msg.length === UdpPacketTypeByLength.PING) {
+      return {
+        type: UdpPacketType.Ping,
+        s: ssrc,
+        d: {
+          timestamp: Date.now()
+        }
+      }
+    } else if (msg.length > UdpPacketTypeByLength.VOICE_DATA_THRESHOLD) {
+      return {
+        type: UdpPacketType.Voice,
+        s: ssrc,
+        d: msg
+      }
+    }
+
+    return null;
+  }
+
+  private handleIncoming(msg: Buffer<ArrayBuffer>, info: udp.RemoteInfo) {
+    const packet = this.parseUdpPacket(msg, info);
+
+    if (!packet) {
       return;
     }
 
-    logText(message, 'UDP_SERVER');
-  },
-  sendBytes(address, port, bytes) {
-    server.send(
-      bytes as string | readonly any[] | NodeJS.ArrayBufferView,
-      port as number | undefined,
-      address as string | undefined,
-      (err) => {
-        if (err) {
-          this.debug(
-            `Failed sending ${String(bytes.length)} bytes to ${String(address)}:${String(port)} -> ${err.message}`,
-          );
-          return false;
-        }
+    this.ensureSession(packet.s, info);
 
-        this.debug(`Sent ${String(bytes.length)} bytes to ${String(address)}:${String(port)}`);
-        return true;
-      },
-    );
-  },
-  start(port, debug_logs = false) {
-    this.port = port;
-    this.debug_logs = debug_logs;
+    switch (packet.type) {
+      case UdpPacketType.Ping:
+        this.sendBytes(info.address, info.port, msg);
 
-    server.on('listening', () => {
-      const address = server.address();
-      const ipaddr = address.address;
+        break;
+      case UdpPacketType.Discovery:
+        this.handleDiscovery(packet, info);
 
-      this.debug(`Ready on ${ipaddr}:${String(this.port)}`);
-    });
+        break;
+      case UdpPacketType.Voice:
+        this.handleVoiceData(packet);
 
-    server.on('error', (error) => {
-      this.debug(`An unexpected error occurred: ${error.toString()}`);
+        break;
+    }
+  }
 
-      server.close();
-    });
+  private handleVoiceData(packet: UdpVoicePacket) {
+    try {
+      const ssrc = packet.s;
+      const session = this.clients.get(ssrc);
 
-    server.on('message', (msg, info) => {
-      if (msg.length < 4) {
-        this.debug(`Message length check failed, packet had no ssrc.`);
+      if (!session) {
+        this.debug(`Received voice data for unknown SSRC: ${String(ssrc)}`);
+
         return;
       }
 
-      const ssrc = msg.readUInt32BE(0);
+      let msg = packet.d;
 
-      let session = this.clients.get(ssrc);
+      const voiceKey = Buffer.from(session.encryption_key);
+      const nonce = Buffer.alloc(24).fill(0);
 
-      if (!session) {
-        let encryption = this.encryptionsMap.get(ssrc);
+      msg.subarray(0, 12).copy(nonce, 0);
 
-        encryption ??= {
-          mode: 'xsalsa20_poly1305',
-          key: [
-            211, 214, 237, 8, 221, 92, 86, 132, 167, 57, 17, 71, 189, 169, 224, 211, 115, 17, 191,
-            82, 96, 98, 107, 155, 92, 72, 52, 246, 52, 109, 142, 194,
-          ],
-        };
+      const encryptedPayload = msg.subarray(12);
+      const decryptedOpusData = sodium.crypto_secretbox_open_easy(
+        encryptedPayload,
+        nonce,
+        voiceKey,
+      );
 
-        const sesh = {
-          ip_addr: info.address,
-          ip_port: info.port,
-          encryption_mode: encryption.mode,
-          encryption_key: encryption.key,
-        };
+      if (!decryptedOpusData) {
+        this.debug(`Failed to decrypt voice packet from SSRC: ${String(ssrc)}`);
 
-        this.clients.set(ssrc, sesh);
-
-        session = sesh;
+        return;
       }
 
-      this.debug(
-        `Incoming -> ${String(msg.length)} bytes from ${info.address}:${String(info.port)}`,
-      );
-      this.debug(
-        `Attempted deserialization -> ${msg.toString('utf8')} from ${info.address}:${String(info.port)}`,
-      );
+      for (const [otherSsrc, otherSession] of this.clients) {
+        if (otherSsrc !== ssrc) {
+          const otherKey = Buffer.from(otherSession.encryption_key);
+          const reEncryptionNonce = Buffer.alloc(24).fill(0);
 
-      if (msg.length === 70) {
-        //ip discovery
+          msg.subarray(0, 12).copy(reEncryptionNonce, 0);
 
-        const ssrc = msg.readUInt32BE(0);
+          const reEncryptedPayload = sodium.crypto_secretbox_easy(
+            decryptedOpusData,
+            reEncryptionNonce,
+            otherKey,
+          );
 
-        this.debug(`Received SSRC: ${String(ssrc)}`);
+          const reEncryptedPacket = Buffer.concat([
+            msg.subarray(0, 12),
+            typeof reEncryptedPayload === 'string'
+              ? Buffer.from(reEncryptedPayload, 'utf8')
+              : Buffer.from(reEncryptedPayload),
+          ]);
 
-        const ipDiscoveryResponse = Buffer.alloc(70);
-
-        ipDiscoveryResponse.writeUInt32LE(ssrc, 0);
-        ipDiscoveryResponse.write(info.address, 4, 'utf8');
-        ipDiscoveryResponse.writeUInt16LE(info.port, 68);
-
-        this.sendBytes(info.address, info.port, ipDiscoveryResponse);
-      } else if (msg.length === 8) {
-        //ping packet(?)
-
-        this.sendBytes(info.address, info.port, msg);
-      } else if (msg.length > 12) {
-        const ssrc = msg.readUInt32BE(8);
-
-        const session = this.clients.get(ssrc);
-
-        if (!session) {
-          this.debug(`Received voice data for unknown SSRC: ${String(ssrc)}`);
-          return;
+          this.sendBytes(otherSession.ip_addr, otherSession.ip_port, reEncryptedPacket);
+          this.emit('speaking', { ssrc, speaking: true, delay: 0 }); //we need to then loop through rtc server clients and dispatch op speaking to them with tehse properties
+          /*
+          udpServer.on('speaking', (data) => {
+  rtcServer.broadcast({
+    op: OPCODES.SPEAKING,
+    d: {
+      ssrc: data.ssrc,
+      speaking: data.speaking,
+      delay: 0,
+    },
+  });
+});
+*/
         }
+      }
+    }
+    catch (error) {
+      this.debug(`Failed to handle voice data for client`);
 
-        const voiceKey = Buffer.from(session.encryption_key);
+      console.error(error);
+    }
+  }
 
-        const nonce = Buffer.alloc(24).fill(0);
-        msg.subarray(0, 12).copy(nonce, 0);
+  private handleDiscovery(packet: UdpDiscoveryPacket, info: udp.RemoteInfo) {
+    const response = Buffer.alloc(70);
 
-        const encryptedPayload = msg.subarray(12);
+    response.writeUInt32LE(packet.s, 0);
+    response.write(info.address, 4, 'utf8');
+    response.writeUInt16LE(info.port, 68);
 
-        const decryptedOpusData = sodium.crypto_secretbox_open_easy(
-          encryptedPayload,
-          nonce,
-          voiceKey,
-        );
+    this.sendBytes(info.address, info.port, response);
+  }
 
-        if (!decryptedOpusData) {
-          this.debug(`Failed to decrypt voice packet from SSRC: ${String(ssrc)}`);
-          return;
-        }
-
-        for (const [otherSsrc, otherSession] of this.clients) {
-          if (otherSsrc !== ssrc) {
-            const otherKey = Buffer.from(otherSession.encryption_key);
-
-            const reEncryptionNonce = Buffer.alloc(24).fill(0);
-            msg.subarray(0, 12).copy(reEncryptionNonce, 0);
-
-            const reEncryptedPayload = sodium.crypto_secretbox_easy(
-              decryptedOpusData,
-              reEncryptionNonce,
-              otherKey,
-            );
-
-            const reEncryptedPacket = Buffer.concat([
-              msg.subarray(0, 12),
-              typeof reEncryptedPayload === 'string'
-                ? Buffer.from(reEncryptedPayload, 'utf8')
-                : Buffer.from(reEncryptedPayload),
-            ]);
-
-            this.sendBytes(otherSession.ip_addr, otherSession.ip_port, reEncryptedPacket);
-
-            for (const [_, clientSocket] of global.rtcServer.clients) {
-              clientSocket.send(
-                JSON.stringify({
-                  op: OPCODES.SPEAKING,
-                  d: {
-                    ssrc: ssrc,
-                    speaking: true,
-                    delay: 0,
-                  },
-                }),
-              );
-            }
-          }
-        }
+  public sendBytes(address: string, port: number, bytes: Buffer) {
+    this.socket.send(bytes, port, address, (err) => {
+      if (err) {
+        this.debug(`Failed to send UDP packet response -> ${err.message}`);
       }
     });
+  }
 
-    server.bind(port as number | undefined);
-  },
-};
+  public async start(port: number, debugLogs = false) {
+    await sodium.ready;
 
-export default udpServer;
+    this.debugLogs = debugLogs;
+    this.socket.bind(port);
+  }
+}
+
+export default new UdpServer();

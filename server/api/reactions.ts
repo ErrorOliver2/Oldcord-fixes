@@ -1,20 +1,15 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 
-import dispatcher from '../helpers/dispatcher.js';
-import errors from '../helpers/errors.js';
-import globalUtils from '../helpers/globalutils.js';
+import dispatcher from '../helpers/dispatcher.ts';
+import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
-import { channelPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.js';
-import quickcache from '../helpers/quickcache.js';
-import Watchdog from '../helpers/watchdog.js';
+import { channelPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { MessageService } from './services/messageService.ts';
+import { ChannelType } from '../types/channel.ts';
+import permissions from '../helpers/permissions.ts';
+import { prisma } from '../prisma.ts';
 
 const router = Router({ mergeParams: false });
-
-router.param('userid', async (req, res, next, userid) => {
-  req.user = await global.database.getAccountByUserId(userid);
-
-  next();
-});
 
 router.delete(
   ['/:urlencoded/@me', '/:urlencoded/%40me'],
@@ -22,42 +17,28 @@ router.delete(
     global.config.ratelimit_config.removeReaction.maxPerTimeFrame,
     global.config.ratelimit_config.removeReaction.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.removeReaction.maxPerTimeFrame,
-    global.config.ratelimit_config.removeReaction.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const account = req.account;
-      const channel = req.channel;
+      const account = req.account!!;
+      const channel = req.channel!!;
+      const guild = req.guild!!;
 
-      if (!channel) {
+      if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const guild = req.guild;
+      const message = req.message!!;
 
-      if (channel.type != 1 && channel.type != 3 && !guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-      }
-
-      const message = req.message;
-
-      if (!message) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
-      if (guild && guild.exclusions.includes('reactions')) {
+      if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
           code: 400,
           message: 'Reactions are disabled in this server due to its maximum support',
         });
       }
 
-      let encoded = req.params.urlencoded;
+      let encoded = req.params.urlencoded as string;
       let dispatch_name = decodeURIComponent(encoded);
-      let id = null;
+      let id: string | null = null;
 
       if (encoded.includes(':')) {
         id = encoded.split(':')[1];
@@ -65,8 +46,8 @@ router.delete(
         dispatch_name = encoded;
       }
 
-      const tryUnReact = await global.database.removeMessageReaction(
-        message,
+      const tryUnReact = await MessageService.removeMessageReaction(
+        message.id,
         account.id,
         id,
         dispatch_name,
@@ -88,13 +69,13 @@ router.delete(
 
       if (guild)
         await dispatcher.dispatchEventInChannel(
-          req.guild,
+          req.guild!!.id,
           channel.id,
           'MESSAGE_REACTION_REMOVE',
           payload,
         );
       else
-        await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_REACTION_REMOVE', payload);
+        await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_REACTION_REMOVE', payload);
 
       return res.status(204).send();
     } catch (error) {
@@ -112,47 +93,28 @@ router.delete(
     global.config.ratelimit_config.removeReaction.maxPerTimeFrame,
     global.config.ratelimit_config.removeReaction.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.removeReaction.maxPerTimeFrame,
-    global.config.ratelimit_config.removeReaction.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const user = req.user;
-
-      if (!user) {
-        return res.status(401).json(errors.response_401.UNAUTHORIZED);
-      }
-
-      const channel = req.channel;
-
-      if (!channel) {
-        return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-      }
-
+      const user = req.user!!;
+      const channel = req.channel!!;
       const guild = req.guild;
 
-      if (channel.type != 1 && channel.type != 3 && !guild) {
+      if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const message = req.message;
+      const message = req.message!!;
 
-      if (!message) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
-      if (guild && guild.exclusions.includes('reactions')) {
+      if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
           code: 400,
           message: 'Reactions are disabled in this server due to its maximum support',
         });
       }
 
-      let encoded = req.params.urlencoded;
+      let encoded = req.params.urlencoded as string;
       let dispatch_name = decodeURIComponent(encoded);
-      let id = null;
+      let id: string | null = null;
 
       if (encoded.includes(':')) {
         id = encoded.split(':')[1];
@@ -160,8 +122,8 @@ router.delete(
         dispatch_name = encoded;
       }
 
-      const tryUnReact = await global.database.removeMessageReaction(
-        message,
+      const tryUnReact = await MessageService.removeMessageReaction(
+        message.id,
         user.id,
         id,
         dispatch_name,
@@ -183,13 +145,13 @@ router.delete(
 
       if (guild)
         await dispatcher.dispatchEventInChannel(
-          req.guild,
+          req.guild!!.id,
           channel.id,
           'MESSAGE_REACTION_REMOVE',
           payload,
         );
       else
-        await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_REACTION_REMOVE', payload);
+        await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_REACTION_REMOVE', payload);
 
       return res.status(204).send();
     } catch (error) {
@@ -206,42 +168,28 @@ router.put(
     global.config.ratelimit_config.addReaction.maxPerTimeFrame,
     global.config.ratelimit_config.addReaction.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.addReaction.maxPerTimeFrame,
-    global.config.ratelimit_config.addReaction.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const account = req.account;
-      const channel = req.channel;
+      const account = req.account!!;
+      const channel = req.channel!!;
+      const guild = req.guild!!;
 
-      if (!channel) {
+      if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const guild = req.guild;
+      const message = req.message!!;
 
-      if (channel.type != 1 && channel.type != 3 && !guild) {
-        return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-      }
-
-      const message = req.message;
-
-      if (!message) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
-      if (guild && guild.exclusions.includes('reactions')) {
+      if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
           code: 400,
           message: 'Reactions are disabled in this server due to its maximum support',
         });
       }
 
-      let encoded = req.params.urlencoded;
+      let encoded = req.params.urlencoded as string;
       let dispatch_name = decodeURIComponent(encoded);
-      let id = null;
+      let id: string | null = null;
 
       if (encoded.includes(':')) {
         id = encoded.split(':')[1];
@@ -255,20 +203,20 @@ router.put(
       });
 
       if (
-        message.reactions.some(
+        message.reactions?.some(
           (x) => x.user_id === account.id && JSON.stringify(x.emoji) === reactionKey,
         )
       ) {
         return res.status(204).send(); //dont dispatch more than once
       }
 
-      const reactionExists = message.reactions.some((x) => JSON.stringify(x.emoji) === reactionKey);
+      const reactionExists = message.reactions?.some((x) => JSON.stringify(x.emoji) === reactionKey);
 
       if (!reactionExists) {
-        const canAdd = global.permissions.hasChannelPermissionTo(
+        const canAdd = permissions.hasChannelPermissionTo(
           req.channel,
           req.guild,
-          req.account.id,
+          req.account!!.id,
           'ADD_REACTIONS',
         );
 
@@ -277,7 +225,7 @@ router.put(
         }
       }
 
-      const tryReact = await global.database.addMessageReaction(message, account.id, id, encoded);
+      const tryReact = await MessageService.addMessageReaction(message.id, account.id, id, encoded);
 
       if (!tryReact) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
@@ -295,12 +243,12 @@ router.put(
 
       if (guild)
         await dispatcher.dispatchEventInChannel(
-          req.guild,
+          req.guild!!.id,
           channel.id,
           'MESSAGE_REACTION_ADD',
           payload,
         );
-      else await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_REACTION_ADD', payload);
+      else await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_REACTION_ADD', payload);
 
       return res.status(204).send();
     } catch (error) {
@@ -311,36 +259,27 @@ router.put(
   },
 );
 
-router.get('/:urlencoded', quickcache.cacheFor(60 * 5), async (req, res) => {
+router.get('/:urlencoded', async (req: Request, res: Response) => {
   try {
-    const channel = req.channel;
+    const channel = req.channel!!;
+    const guild = req.guild!!;
 
-    if (!channel) {
+    if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
       return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
     }
 
-    const guild = req.guild;
+    const message = req.message!!;
 
-    if (channel.type != 1 && channel.type != 3 && !guild) {
-      return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-    }
-
-    const message = req.message;
-
-    if (!message) {
-      return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-    }
-
-    if (guild && guild.exclusions.includes('reactions')) {
+    if (guild && guild.exclusions?.includes('reactions')) {
       return res.status(400).json({
         code: 400,
         message: 'Reactions are disabled in this server due to its maximum support',
       });
     }
 
-    let encoded = req.params.urlencoded;
+    let encoded = req.params.urlencoded as string;
     let dispatch_name = decodeURIComponent(encoded);
-    let id = null;
+    let id: string | null = null;
 
     if (encoded.includes(':')) {
       id = encoded.split(':')[1];
@@ -348,27 +287,43 @@ router.get('/:urlencoded', quickcache.cacheFor(60 * 5), async (req, res) => {
       dispatch_name = encoded;
     }
 
-    let limit = req.query.limit;
+    let queryLimit = req.query.limit as string;
+    let limit = parseInt(queryLimit);
 
     if (limit > 100 || !limit) {
       limit = 100;
     }
 
-    const reactions = message.reactions;
+    const reactions = message.reactions!!;
 
     const filteredReactions = reactions.filter(
       (x) => x.emoji.name == dispatch_name && x.emoji.id == id,
     );
 
-    const return_users = [];
+    const userIds = [...new Set(filteredReactions.map(r => r.user_id))];
 
-    for (var filteredReaction of filteredReactions) {
-      const user = await global.database.getAccountByUserId(filteredReaction.user_id);
+    const users = await prisma.user.findMany({
+      where: {
+        id: { in: userIds }
+      },
+      select: {
+        id: true,
+        username: true,
+        discriminator: true,
+        avatar: true,
+        bot: true,
+        premium: true
+      }
+    });
 
-      if (user == null) continue;
-
-      return_users.push(globalUtils.miniUserObject(user));
-    }
+    const return_users = users.map(u => ({
+      id: u.id,
+      username: u.username,
+      discriminator: u.discriminator,
+      avatar: u.avatar,
+      bot: u.bot ?? false,
+      premium: u.premium ?? false
+    }));
 
     return res.status(200).json(return_users);
   } catch (error) {

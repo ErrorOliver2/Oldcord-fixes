@@ -61,3 +61,83 @@ export const GatewayPayloadSchema = z
   });
 
 export type GatewayPayload = z.infer<typeof GatewayPayloadSchema>;
+
+export enum GatewayOpcode {
+  DISPATCH = 0,
+  HEARTBEAT = 1,
+  IDENTIFY = 2,
+  PRESENCE_UPDATE = 3,
+  VOICE_STATE_UPDATE = 4,
+  RESUME = 6,
+  RECONNECT = 7,
+  REQUEST_GUILD_MEMBERS = 8,
+  INVALID_SESSION = 9,
+  HELLO = 10,
+  HEARTBEAT_ACK = 11,
+  LAZY_UPDATE = 12,
+  GUILD_SUBSCRIPTIONS = 14,
+}
+
+export type GatewayIdentifyPacket = GatewayPacket<{
+  token: string;
+  properties: {
+    $os: string;
+    $browser: string;
+    $device: string;
+  };
+  compress?: boolean;
+  large_threshold?: number;
+  shard?: [number, number];
+  presence?: any;
+  capabilities?: number;
+  intents?: number;
+}>;
+
+export type GatewayHelloPacket = GatewayPacket<{
+  heartbeat_interval: number;
+}>;
+
+export type GatewayHeartbeatPacket = GatewayPacket<number | null> & { op: GatewayOpcode.HEARTBEAT };
+export type GatewayHeartbeatAck = GatewayPacket<number | null> & { op: GatewayOpcode.HEARTBEAT_ACK };
+
+export type GatewayPresencePacket = GatewayPacket<{
+  status: 'online' | 'dnd' | 'idle' | 'invisible' | 'offline';
+  since: number | null;
+  activities: any[];
+  afk: boolean;
+  game?: string | null;
+  game_id?: string | null;
+  idle_since?: number | null;
+}>;
+
+export type GatewayVoiceStatePacket = GatewayPacket<{
+  guild_id: string | null;
+  channel_id: string | null;
+  self_mute: boolean;
+  self_deaf: boolean;
+  self_video?: boolean;
+}>;
+
+export type GatewayLazyFetchPacket = GatewayPacket<string[]>;
+
+export type GatewayMemberChunksPacket = GatewayPacket<{
+  guild_id: string;
+  channels?: Record<string, [number, number][]>;
+  typing?: boolean;
+  threads?: boolean;
+  activities?: boolean;
+}>;
+
+export type GatewayResumePacket = GatewayPacket<{
+  token: string;
+  session_id: string;
+  seq: number;
+  capabilities?: any;
+}>;
+
+export interface GatewayPacket<T = any> {
+  op: GatewayOpcode;
+  d: T;
+  s?: number | null;
+  t?: string | null;
+}

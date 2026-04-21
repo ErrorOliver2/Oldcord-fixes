@@ -4,10 +4,12 @@ import type { Request, Response } from "express";
 const router = Router();
 import { generate } from '../helpers/snowflake.js';
 
-router.param('id', async (_req: Request, _, next, _id: string) => {
+/*
+router.param('id', async (_req: Request, _res: Response, next: NextFunction, _id: string) => {
   //Currently unknown
   next();
 });
+*/
 
 router.get('/directory/:id', (req: Request, res: Response) => {
   const id = req.params.id;

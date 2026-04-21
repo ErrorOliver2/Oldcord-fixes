@@ -1,38 +1,28 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 
-import dispatcher from '../helpers/dispatcher.js';
-import errors from '../helpers/errors.js';
-import globalUtils from '../helpers/globalutils.js';
-import lazyRequest from '../helpers/lazyRequest.js';
+import dispatcher from '../helpers/dispatcher.ts';
+import errors from '../helpers/errors.ts';
+import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
 import {
   guildMiddleware,
   guildPermissionsMiddleware,
   instanceMiddleware,
   rateLimitMiddleware,
-} from '../helpers/middlewares.js';
-import quickcache from '../helpers/quickcache.js';
-import Watchdog from '../helpers/watchdog.js';
-import bans from './bans.js';
-import emojis from './emojis.js';
-import members from './members.js';
+} from '../helpers/middlewares.ts';
+import bans from './bans.ts';
+import emojis from './emojis.ts';
+import members from './members.ts';
 import roles from './roles.js';
+import { AccountService } from './services/accountService.ts';
+import { ChannelService } from './services/channelService.ts';
+import { GuildService } from './services/guildService.ts';
+import permissions from '../helpers/permissions.ts';
+import { ChannelType } from '../types/channel.ts';
 
 const router = Router();
 
-router.param('guildid', async (req, _, next, guildid) => {
-  req.guild = await global.database.getGuildById(guildid);
-
-  next();
-});
-
-router.param('subscriptionid', async (req, _, next, subscriptionid) => {
-  req.subscription = await global.database.getSubscription(subscriptionid);
-
-  next();
-});
-
-router.get('/:guildid', guildMiddleware, quickcache.cacheFor(60 * 10, true), async (req, res) => {
+router.get('/:guildid', guildMiddleware, async (req: Request, res: Response) => {
   return res.status(200).json(req.guild);
 });
 
@@ -43,18 +33,15 @@ router.post(
     global.config.ratelimit_config.createGuild.maxPerTimeFrame,
     global.config.ratelimit_config.createGuild.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.createGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.createGuild.timeFrame,
-    1,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       if (!req.body.name || req.body.name == '') {
         return res.status(400).json({
           name: 'This field is required.',
         });
       }
+
+      const client_date = req.client_build_date!!;
 
       if (
         req.body.name.length < global.config.limits['guild_name'].min ||
@@ -65,7 +52,7 @@ router.post(
         });
       }
 
-      const creator = req.account;
+      const creator = req.account!!;
 
       if (!req.body.region) {
         req.body.region = 'everything'; // default to everything bc of third party clients / mobile
@@ -73,16 +60,16 @@ router.post(
 
       if (
         req.body.region != 'everything' &&
-        !globalUtils.canUseServer(req.client_build_date.getFullYear(), req.body.region)
+        !globalUtils.canUseServer(client_date.getFullYear(), req.body.region)
       ) {
         return res.status(400).json({
           name: 'Year must be your current client build year or pick everything.',
         });
       }
 
-      const client_date = req.client_build_date;
+      
       let selected_region = req.body.region;
-      const exclusions = [];
+      const exclusions: string[] = [];
 
       const month = client_date.getMonth();
       const year = client_date.getFullYear();
@@ -97,8 +84,8 @@ router.post(
         } else if (year != 2016) selected_region = 'everything';
       }
 
-      const guild = await global.database.createGuild(
-        creator,
+      const guild = await GuildService.createGuild(
+        creator.id,
         req.body.icon,
         req.body.name,
         req.body.region,
@@ -110,31 +97,33 @@ router.post(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       } else {
         if (!req.channel_types_are_ints) {
-          guild.channels[0].type = 'text';
+          guild.channels!![0].type = 'text';
         }
 
-        const presence = guild.presences[0];
+        const presence = guild.presences!![0];
         const isOnline = presence.status !== 'offline';
 
         const onlineCount = isOnline ? 1 : 0;
         const offlineCount = isOnline ? 0 : 1;
 
-        const listItems = [];
+        const listItems: any[] = [];
 
         listItems.push({ group: { id: 'online', count: onlineCount } });
+
+        const joined_at = new Date().toISOString();
 
         if (isOnline) {
           listItems.push({
             member: {
-              user: globalUtils.miniUserObject(guild.members[0].user),
+              user: globalUtils.miniUserObject(guild.members!![0]?.user!!),
               roles: [],
               presence: {
-                user: globalUtils.miniUserObject(guild.members[0].user),
+                user: globalUtils.miniUserObject(guild.members!![0]?.user!!),
                 status: presence.status,
                 activities: [],
                 game_id: null,
               },
-              joined_at: guild.joined_at,
+              joined_at: joined_at,
               mute: false,
               deaf: false,
             },
@@ -146,15 +135,15 @@ router.post(
         if (!isOnline) {
           listItems.push({
             member: {
-              user: globalUtils.miniUserObject(guild.members[0].user),
+              user: globalUtils.miniUserObject(guild.members!![0]?.user!!),
               roles: [],
               presence: {
-                user: globalUtils.miniUserObject(guild.members[0].user),
+                user: globalUtils.miniUserObject(guild.members!![0]?.user!!),
                 status: 'offline',
                 activities: [],
                 game_id: null,
               },
-              joined_at: guild.joined_at,
+              joined_at: joined_at,
               mute: false,
               deaf: false,
             },
@@ -189,16 +178,16 @@ router.post(
   },
 );
 
-async function guildDeleteRequest(req, res) {
+async function guildDeleteRequest(req: Request, res: Response) {
   try {
-    const user = req.account;
-    const guild = req.guild;
+    const user = req.account!!;
+    const guild = req.guild!!;
 
     if (guild.owner_id == user.id) {
       const code = req.body.code;
 
       if (code) {
-        const valid = await global.database.validateTotpCode(req.account.id, code);
+        const valid = await AccountService.validateTotpCode(user.id, code);
 
         if (!valid) {
           return res.status(400).json({
@@ -208,11 +197,11 @@ async function guildDeleteRequest(req, res) {
         } //Is there a response for this?
       }
 
-      await dispatcher.dispatchEventInGuild(guild, 'GUILD_DELETE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_DELETE', {
         id: req.params.guildid,
       });
 
-      const del = await global.database.deleteGuild(guild.id);
+      const del = await GuildService.delete(guild.id);
 
       if (!del) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
@@ -220,7 +209,7 @@ async function guildDeleteRequest(req, res) {
 
       return res.status(204).send();
     } else {
-      const leave = await global.database.leaveGuild(user.id, guild.id);
+      const leave = await GuildService.leave(user.id, guild.id);
 
       if (!leave) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
@@ -230,17 +219,7 @@ async function guildDeleteRequest(req, res) {
         id: req.params.guildid,
       });
 
-      const activeSessions = dispatcher.getAllActiveSessions();
-
-      for (const session of activeSessions) {
-        if (session.subscriptions && session.subscriptions[req.guild.id]) {
-          if (session.user.id === user.id) continue;
-
-          await lazyRequest.handleMemberRemove(session, req.guild, user.id);
-        }
-      }
-
-      await dispatcher.dispatchEventInGuild(req.guild, 'GUILD_MEMBER_REMOVE', {
+      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_MEMBER_REMOVE', {
         type: 'leave',
         user: globalUtils.miniUserObject(user),
         guild_id: String(req.params.guildid),
@@ -263,11 +242,6 @@ router.post(
     global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
     global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.leaveGuild.timeFrame,
-    1,
-  ),
   guildDeleteRequest,
 );
 
@@ -278,12 +252,7 @@ router.delete(
     global.config.ratelimit_config.deleteGuild.maxPerTimeFrame,
     global.config.ratelimit_config.deleteGuild.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.deleteGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteGuild.timeFrame,
-    0.5,
-  ),
-  guildDeleteRequest,
+  guildDeleteRequest
 );
 
 // UNFORTUNAAAATELY to keep the data fresh it is best advised that we dont cache the response at all.
@@ -296,19 +265,13 @@ router.get(
     global.config.ratelimit_config.messageSearching.maxPerTimeFrame,
     global.config.ratelimit_config.messageSearching.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.messageSearching.maxPerTimeFrame,
-    global.config.ratelimit_config.messageSearching.timeFrame,
-    1,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const account = req.account;
-
-      const guild = req.guild;
+      const account = req.account!!;
+      const guild = req.guild!!;
       const channelsMap = new Map();
 
-      for (const channel of guild.channels) {
+      for (const channel of guild.channels!!) {
         channelsMap.set(channel.id, channel);
       }
 
@@ -319,31 +282,32 @@ router.get(
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const offset = parseInt(req.query.offset) || 0;
-      const limit =
-        req.query.limit && req.query.limit > 0 && req.query.limit <= 50 ? req.query.limit : 50;
-      const author_id = req.query.author_id;
-      const before_id = req.query.max_id;
-      const after_id = req.query.min_id;
-      const mentions = req.query.mentions; //user_id
-      const include_nsfw = req.query.include_nsfw === 'true' ?? false;
-      const has = req.query.has; //fuck this i cant be fucked today
+      const offset = parseInt(req.query.offset as string) || 0;
+      const limit_query = req.query.limit as string ?? "50";
+      const limit_calc = parseInt(limit_query);
+      const limit = limit_calc > 0 && limit_calc <= 50 ? limit_calc : 50;
+      const author_id = req.query.author_id as string;
+      const before_id = req.query.max_id as string;
+      const after_id = req.query.min_id as string;
+      const mentions = req.query.mentions as string; //user_id
+      const include_nsfw = req.query.include_nsfw && req.query.include_nsfw === 'true';
+      //const has = req.query.has; //fuck this i cant be fucked today
       //need to do during too
 
-      const results = await global.database.getGuildMessages(
+      const results = await GuildService.getGuildMessages(
         guild.id,
         author_id,
-        content,
-        channel_id,
+        content as string,
+        channel_id as string,
         mentions,
-        include_nsfw,
+        include_nsfw as boolean,
         before_id,
         after_id,
         limit,
         offset,
       );
 
-      const ret_results = [];
+      const ret_results: any[] = [];
       let minus = 0;
 
       for (var result of results.messages) {
@@ -354,7 +318,7 @@ router.get(
           continue;
         }
 
-        const canReadChannel = global.permissions.hasChannelPermissionTo(
+        const canReadChannel = permissions.hasChannelPermissionTo(
           channel,
           guild,
           account.id,
@@ -393,16 +357,10 @@ router.patch(
     global.config.ratelimit_config.updateGuild.maxPerTimeFrame,
     global.config.ratelimit_config.updateGuild.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.updateGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.updateGuild.timeFrame,
-    1,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const sender = req.account;
-
-      let what = req.guild;
+      const sender = req.account!!;
+      let guild = req.guild!!;
 
       if (
         req.body.name &&
@@ -414,7 +372,7 @@ router.patch(
         });
       }
 
-      if (req.body.region && req.body.region != what.region && req.body.region != 'everything') {
+      if (req.body.region && req.body.region != guild.region && req.body.region != 'everything') {
         return res.status(400).json({
           region:
             'Cannot change the oldcord year region for this server at this time. Try again later.',
@@ -459,14 +417,14 @@ router.patch(
           });
         } //Response??
 
-        const new_owner = what.members.find((x) => x.id == req.body.owner_id);
+        const new_owner = guild.members?.find((x) => x.id == req.body.owner_id);
 
         if (!new_owner) {
           return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
         }
 
-        const tryTransferOwner = await global.database.transferGuildOwnership(
-          what.id,
+        const tryTransferOwner = await GuildService.transferGuildOwnership(
+          guild.id,
           req.body.owner_id,
         );
 
@@ -474,19 +432,19 @@ router.patch(
           return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
         }
 
-        what = await global.database.getGuildById(req.params.guildid);
+        guild = await GuildService.getById(req.params.guildid as string);
 
-        if (what == null) {
+        if (guild == null) {
           return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
         }
 
-        await dispatcher.dispatchEventInGuild(req.guild, 'GUILD_UPDATE', what);
+        await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_UPDATE', guild);
 
-        return res.status(200).json(what);
+        return res.status(200).json(guild);
       }
 
-      const update = await global.database.updateGuild(
-        req.params.guildid,
+      const update = await GuildService.updateGuild(
+        req.params.guildid as string,
         req.body.afk_channel_id,
         req.body.afk_timeout,
         req.body.icon,
@@ -503,15 +461,15 @@ router.patch(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      what = await global.database.getGuildById(req.params.guildid);
+      guild = await GuildService.getById(req.params.guildid as string);
 
-      if (what == null) {
+      if (guild == null) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      await dispatcher.dispatchEventInGuild(req.guild, 'GUILD_UPDATE', what);
+      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_UPDATE', guild);
 
-      return res.status(200).json(what);
+      return res.status(200).json(guild);
     } catch (error) {
       logText(error, 'error');
 
@@ -524,7 +482,7 @@ router.get(
   '/:guildid/prune',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
-  async (_, res) => {
+  async (_req: Request, res: Response) => {
     return res.status(200).json([]);
   },
 );
@@ -533,7 +491,7 @@ router.post(
   '/:guildid/prune',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
-  async (_, res) => {
+  async (_req: Request, res: Response) => {
     return res.status(204).send();
   },
 );
@@ -545,17 +503,12 @@ router.put(
     global.config.ratelimit_config.subscriptions.maxPerTimeFrame,
     global.config.ratelimit_config.subscriptions.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.subscriptions.maxPerTimeFrame,
-    global.config.ratelimit_config.subscriptions.timeFrame,
-    1,
-  ),
-  async (req, res) => {
-    const tryBoostServer = await global.database.createGuildSubscription(req.account, req.guild);
+  async (req: Request, res: Response) => {
+    const tryBoostServer = await GuildService.createGuildSubscription(req.account!!.id, req.guild!!.id);
 
     if (!tryBoostServer) {
       return res.status(400).json({
-        code: 404,
+        code: 400,
         message: 'Failed to boost. Please try again.', //find the actual fail msg??
       });
     }
@@ -571,18 +524,13 @@ router.delete(
     global.config.ratelimit_config.subscriptions.maxPerTimeFrame,
     global.config.ratelimit_config.subscriptions.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.subscriptions.maxPerTimeFrame,
-    global.config.ratelimit_config.subscriptions.timeFrame,
-    1,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       if (!req.subscription) {
         return res.status(404).json(errors.response_404.UNKNOWN_SUBSCRIPTION_PLAN); //only error i can rlly find related
       }
 
-      await global.database.removeSubscription(req.subscription);
+      await GuildService.removeSubscription(req.subscription);
 
       return res.status(204).send();
     } catch (error) {
@@ -596,9 +544,8 @@ router.delete(
 router.get(
   '/:guildid/premium/subscriptions',
   guildMiddleware,
-  quickcache.cacheFor(60 * 5, true),
-  async (req, res) => {
-    const guild_subscriptions = await global.database.getGuildSubscriptions(req.guild);
+  async (req: Request, res: Response) => {
+    const guild_subscriptions = await GuildService.getGuildSubscriptions(req.guild!!.id);
 
     return res.status(200).json(guild_subscriptions);
   },
@@ -607,10 +554,9 @@ router.get(
 router.get(
   '/:guildid/embed',
   guildMiddleware,
-  quickcache.cacheFor(60 * 30, true),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const widget = await global.database.getGuildWidget(req.params.guildid);
+      const widget = await GuildService.getGuildWidget(req.params.guildid as string);
 
       if (widget == null) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
@@ -629,25 +575,19 @@ router.patch(
   '/:guildid/embed',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const update = await global.database.updateGuildWidget(
-        req.params.guildid,
+      const update = await GuildService.updateGuildWidget(
+        req.params.guildid as string,
         req.body.channel_id,
         req.body.enabled,
       );
 
       if (!update) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
-      }
+      } //should we return something specific here? like 404 no guild widget found or?
 
-      const widget = await global.database.getGuildWidget(req.params.guildid);
-
-      if (widget == null) {
-        return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
-      } //Should we return Unknown Widget here?
-
-      return res.status(200).json(widget);
+      return res.status(200).json(update);
     } catch (error) {
       logText(error, 'error');
 
@@ -660,8 +600,7 @@ router.get(
   '/:guildid/audit-logs',
   guildMiddleware,
   guildPermissionsMiddleware('MAANGE_GUILD'),
-  quickcache.cacheFor(60 * 5),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       /*
         ALL: null,
@@ -693,13 +632,13 @@ router.get(
             MESSAGE_DELETE: 72
         */ //action_type for audit log
 
-      const limit = (req.query.limit > 50 ? 50 : req.query.limit) || 50;
+      //const limit = (parseInt(req.query.limit as string) > 50 ? 50 : parseInt(req.query.limit as string)) || 50;
 
-      const audit_log_entries = req.guild.audit_logs;
-      const audit_log_user_ids = [
+      const audit_log_entries = req.guild!!.audit_logs!!;
+      const audit_log_user_ids: any[] = [
         ...new Set(audit_log_entries.map((entry) => entry.user_id).filter((id) => id)),
-      ];
-      let audit_log_users = await global.database.getAccountsByIds(audit_log_user_ids);
+      ]; //to-do: fix
+      let audit_log_users = await AccountService.getByIds(audit_log_user_ids);
 
       audit_log_users = audit_log_users.map((user) => globalUtils.miniUserObject(user));
 
@@ -720,10 +659,9 @@ router.get(
   '/:guildid/invites',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
-  quickcache.cacheFor(60 * 5),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const invites = await global.database.getGuildInvites(req.params.guildid);
+      const invites = await GuildService.getGuildInvites(req.params.guildid as string);
 
       return res.status(200).json(invites);
     } catch (error) {
@@ -742,16 +680,12 @@ router.post(
     global.config.ratelimit_config.createChannel.maxPerTimeFrame,
     global.config.ratelimit_config.createChannel.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.createChannel.maxPerTimeFrame,
-    global.config.ratelimit_config.createChannel.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const sender = req.account;
+      const sender = req.account!!;
+      const guild = req.guild!!;
 
-      if (req.guild.channels.length >= global.config.limits['channels_per_guild'].max) {
+      if (guild!!.channels!!.length >= global.config.limits['channels_per_guild'].max) {
         return res.status(400).json({
           code: 400,
           message: `Maximum number of channels per guild exceeded (${global.config.limits['channels_per_guild'].max})`,
@@ -777,7 +711,7 @@ router.post(
 
       req.body.name = req.body.name.replace(/ /g, '-');
 
-      const member = req.guild.members.find((x) => x.id === sender.id);
+      const member = guild.members!!.find((x) => x.id === sender.id);
 
       if (!member) {
         return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
@@ -790,7 +724,7 @@ router.post(
       } else number_type = req.body.type;
 
       //Guild Text, Guild Voice, Guild Category, Guild News
-      if (![0, 2, 4, 5].includes(number_type)) {
+      if (![ChannelType.TEXT, ChannelType.VOICE, ChannelType.CATEGORY, ChannelType.NEWS].includes(number_type)) {
         return res.status(400).json({
           code: 400,
           message: 'Invalid channel type (Must be one of 0, 2, 4, 5)',
@@ -800,7 +734,7 @@ router.post(
       let send_parent_id = null;
 
       if (req.body.parent_id) {
-        if (!req.guild.channels.find((x) => x.id === req.body.parent_id && x.type === 4)) {
+        if (!guild.channels!!.find((x) => x.id === req.body.parent_id && x.type === 4)) {
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
         }
 
@@ -814,11 +748,11 @@ router.post(
         send_parent_id = req.body.parent_id;
       }
 
-      const channel = await global.database.createChannel(
-        req.params.guildid,
+      const channel = await ChannelService.createChannel(
+        req.params.guildid as string,
         req.body.name,
         number_type,
-        req.guild.channels.length + 1,
+        guild.channels!!.length + 1,
         [],
         null,
         send_parent_id,
@@ -830,8 +764,8 @@ router.post(
 
       channel.type = typeof req.body.type === 'string' ? req.body.type : number_type;
 
-      await dispatcher.dispatchEventInGuild(req.guild, 'CHANNEL_CREATE', function () {
-        return globalUtils.personalizeChannelObject(this.socket, channel);
+      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'CHANNEL_CREATE', function (socket) {
+        return globalUtils.personalizeChannelObject(socket, channel);
       });
 
       return res.status(200).json(channel);
@@ -851,21 +785,17 @@ router.patch(
     global.config.ratelimit_config.updateChannel.maxPerTimeFrame,
     global.config.ratelimit_config.updateChannel.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.updateChannel.maxPerTimeFrame,
-    global.config.ratelimit_config.updateChannel.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const ret = [];
+      const ret: any[] = []; //to-do: fix
+      const guild = req.guild!!;
 
       for (var shit of req.body) {
         var channel_id = shit.id;
         var position = shit.position;
         var parent_id = shit.parent_id;
 
-        const channel = req.guild.channels.find((x) => x.id === channel_id);
+        const channel = guild.channels!!.find((x) => x.id === channel_id);
 
         if (channel == null) {
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
@@ -876,24 +806,24 @@ router.patch(
         if (parent_id) {
           if (parent_id === null) channel.parent_id = null;
 
-          if (req.guild.channels.find((x) => x.id === parent_id && x.type === 4))
+          if (guild.channels!!.find((x) => x.id === parent_id && x.type === 4))
             channel.parent_id = parent_id;
         }
 
-        const outcome = await global.database.updateChannel(channel_id, channel);
+        const outcome = await ChannelService.updateChannel(channel_id, channel);
 
         if (!outcome) {
           return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
         }
 
         if (!req.channel_types_are_ints) {
-          channel.type = channel.type == 2 ? 'voice' : 'text';
+          channel.type = channel.type == ChannelType.VOICE ? 'voice' : 'text';
         }
 
         ret.push(channel);
 
         await dispatcher.dispatchEventToAllPerms(
-          channel.guild_id,
+          channel.guild_id!!,
           channel.id,
           'READ_MESSAGES',
           'CHANNEL_UPDATE',
@@ -910,7 +840,7 @@ router.patch(
   },
 );
 
-router.post('/:guildid/ack', async (req, res) => {
+router.post('/:guildid/ack', async (_req: Request, res: Response) => {
   return res.status(204).send(); //to-do
 });
 
@@ -924,10 +854,9 @@ router.use('/:guildid/emojis', emojis);
 router.get(
   '/:guildid/webhooks',
   guildMiddleware,
-  quickcache.cacheFor(60 * 5, true),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guild = req.guild;
+      const guild = req.guild!!;
       const webhooks = guild.webhooks;
 
       return res.status(200).json(webhooks);
@@ -942,8 +871,7 @@ router.get(
 router.get(
   '/:guildid/regions',
   guildMiddleware,
-  quickcache.cacheFor(60 * 60 * 5, true),
-  (_, res) => {
+  (_req: Request, res: Response) => {
     return res.status(200).json(globalUtils.getRegions());
   },
 );
@@ -961,11 +889,10 @@ router.get(
   '/:guildid/vanity-url',
   guildMiddleware,
   guildPermissionsMiddleware('ADMINISTRATOR'),
-  quickcache.cacheFor(60 * 10),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       return res.status(200).json({
-        code: req.guild.vanity_url_code,
+        code: req.guild!!.vanity_url_code,
       });
     } catch (error) {
       logText(error, 'error');
@@ -979,7 +906,7 @@ router.patch(
   '/:guildid/vanity-url',
   guildMiddleware,
   guildPermissionsMiddleware('ADMINISTRATOR'),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       let code = req.body.code;
 
@@ -987,22 +914,19 @@ router.patch(
         code = null;
       }
 
-      const tryUpdate = await global.database.updateGuildVanity(req.guild.id, code);
+      const result = await GuildService.updateGuildVanity(req.guild!!.id, code);
 
-      if (tryUpdate === 0) {
-        return res.status(400).json({
-          code: 400,
-          code: 'Vanity URL is taken or invalid.',
-        });
-      } else if (tryUpdate === -1) {
-        return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
-      } else {
-        req.guild.vanity_url_code = code;
-
-        return res.status(200).json({
-          code: code,
-        });
+      if (result.error === 'VANITY_ALREADY_EXISTS') {
+        return res.status(400).json({ code: 400, message: "Vanity URL is taken or invalid." });
       }
+
+      if (!result.success) {
+        return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+      }
+
+      req.guild!!.vanity_url_code = code;
+
+      return res.status(200).json({ code: result.vanity_url });
     } catch (error) {
       logText(error, 'error');
 
@@ -1011,7 +935,7 @@ router.patch(
   },
 );
 
-router.get('/:guildid/application-command-index', guildMiddleware, async (req, res) => {
+router.get('/:guildid/application-command-index', guildMiddleware, async (_req: Request, res: Response) => {
   return res.status(403).json({
     code: 403,
     message:

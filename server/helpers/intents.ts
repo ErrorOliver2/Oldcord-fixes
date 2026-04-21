@@ -1,6 +1,30 @@
+export enum IntentBit {
+  GUILDS = 1 << 0,
+  GUILD_MEMBERS = 1 << 1,
+  GUILD_MODERATION = 1 << 2,
+  GUILD_EXPRESSIONS = 1 << 3,
+  GUILD_INTEGRATIONS = 1 << 4,
+  GUILD_WEBHOOKS = 1 << 5,
+  GUILD_INVITES = 1 << 6,
+  GUILD_VOICE_STATES = 1 << 7,
+  GUILD_PRESENCES = 1 << 8,
+  GUILD_MESSAGES = 1 << 9,
+  GUILD_MESSAGE_REACTIONS = 1 << 10,
+  GUILD_MESSAGE_TYPING = 1 << 11,
+  DIRECT_MESSAGES = 1 << 12,
+  DIRECT_MESSAGE_REACTIONS = 1 << 13,
+  DIRECT_MESSAGE_TYPING = 1 << 14,
+  MESSAGE_CONTENT = 1 << 15,
+}
+
+interface IntentData {
+  name: string;
+  events: string[];
+}
+
 const Intents = {
   Data: {
-    [1 << 0]: {
+    [IntentBit.GUILDS]: {
       name: 'GUILDS',
       events: [
         'GUILD_CREATE',
@@ -14,19 +38,35 @@ const Intents = {
         'CHANNEL_DELETE',
       ],
     },
-    [1 << 1]: {
+    /*  GUILD_MEMBERS = 1 << 1,
+  GUILD_MODERATION = 1 << 2,
+  GUILD_EXPRESSIONS = 1 << 3,
+  GUILD_INTEGRATIONS = 1 << 4,
+  GUILD_WEBHOOKS = 1 << 5,
+  GUILD_INVITES = 1 << 6,
+  GUILD_VOICE_STATES = 1 << 7,
+  GUILD_PRESENCES = 1 << 8,
+  GUILD_MESSAGES = 1 << 9,
+  GUILD_MESSAGE_REACTIONS = 1 << 10,
+  GUILD_MESSAGE_TYPING = 1 << 11,
+  DIRECT_MESSAGES = 1 << 12,
+  DIRECT_MESSAGE_REACTIONS = 1 << 13,
+  DIRECT_MESSAGE_TYPING = 1 << 14,
+  MESSAGE_CONTENT = 1 << 15,
+  */
+    [IntentBit.GUILD_MEMBERS]: {
       name: 'GUILD_MEMBERS',
       events: ['GUILD_MEMBER_ADD', 'GUILD_MEMBER_UPDATE', 'GUILD_MEMBER_REMOVE'],
     },
-    [1 << 2]: {
+    [IntentBit.GUILD_MODERATION]: {
       name: 'GUILD_MODERATION',
       events: ['GUILD_AUDIT_LOG_ENTRY_CREATE', 'GUILD_BAN_ADD', 'GUILD_BAN_REMOVE'],
     },
-    [1 << 3]: {
+    [IntentBit.GUILD_EXPRESSIONS]: {
       name: 'GUILD_EXPRESSIONS',
       events: ['GUILD_EMOJIS_UPDATE'],
     },
-    [1 << 4]: {
+    [IntentBit.GUILD_INTEGRATIONS]: {
       name: 'GUILD_INTEGRATIONS',
       events: [
         'GUILD_INTEGRATIONS_UPDATE',
@@ -35,52 +75,52 @@ const Intents = {
         'INTEGRATION_DELETE',
       ],
     },
-    [1 << 5]: {
+    [IntentBit.GUILD_WEBHOOKS]: {
       name: 'GUILD_WEBHOOKS',
       events: ['WEBHOOKS_UPDATE'],
     },
-    [1 << 6]: {
+    [IntentBit.GUILD_INVITES]: {
       name: 'GUILD_INVITES',
       events: ['INVITE_CREATE', 'INVITE_DELETE'],
     },
-    [1 << 7]: {
+    [IntentBit.GUILD_VOICE_STATES]: {
       name: 'GUILD_VOICE_STATES',
       events: ['VOICE_STATE_UPDATE'],
     },
-    [1 << 8]: {
+    [IntentBit.GUILD_PRESENCES]: {
       name: 'GUILD_PRESENCES',
       events: ['PRESENCE_UPDATE'],
     },
-    [1 << 9]: {
+    [IntentBit.GUILD_MESSAGES]: {
       name: 'GUILD_MESSAGES',
       events: ['MESSAGE_DELETE_BULK'],
     },
-    [1 << 10]: {
+    [IntentBit.GUILD_MESSAGE_REACTIONS]: {
       name: 'GUILD_MESSAGE_REACTIONS',
       events: [],
     },
-    [1 << 11]: {
+    [IntentBit.GUILD_MESSAGE_TYPING]: {
       name: 'GUILD_MESSAGE_TYPING',
       events: [],
     },
-    [1 << 12]: {
+    [IntentBit.DIRECT_MESSAGES]: {
       name: 'DIRECT_MESSAGES',
       events: [],
     },
-    [1 << 13]: {
+    [IntentBit.DIRECT_MESSAGE_REACTIONS]: {
       name: 'DIRECT_MESSAGE_REACTIONS',
       events: [],
     },
-    [1 << 14]: {
+    [IntentBit.DIRECT_MESSAGE_TYPING]: {
       name: 'DIRECT_MESSAGE_TYPING',
       events: [],
     },
-    [1 << 15]: {
+    [IntentBit.MESSAGE_CONTENT]: {
       name: 'MESSAGE_CONTENT',
       events: [],
     },
-  },
-  EventToBit: {},
+  } as Record<number, IntentData>,
+  EventToBit: {} as Record<string, number>,
   ComplexEvents: {
     MESSAGE_CREATE: (p) => (p.guild_id ? 1 << 9 : 1 << 12),
     MESSAGE_UPDATE: (p) => (p.guild_id ? 1 << 9 : 1 << 12),
@@ -91,7 +131,7 @@ const Intents = {
     MESSAGE_REACTION_REMOVE_ALL: (p) => (p.guild_id ? 1 << 10 : 1 << 13),
     MESSAGE_REACTION_REMOVE_EMOJI: (p) => (p.guild_id ? 1 << 10 : 1 << 13),
     CHANNEL_PINS_UPDATE: (p) => (p.guild_id ? 1 << 0 : 1 << 12),
-  },
+  } as Record<string, (payload: any) => number>,
 };
 
 for (const [bit, value] of Object.entries(Intents.Data)) {

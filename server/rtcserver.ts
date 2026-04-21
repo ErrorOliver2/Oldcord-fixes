@@ -5,127 +5,140 @@ import { WebSocketServer } from 'ws';
 import { OPCODES, rtcHandlers } from './handlers/rtc.ts';
 import { logText } from './helpers/logger.ts';
 import { type GatewayPayload, GatewayPayloadSchema } from './types/gateway.ts';
+import type WebSocket from 'ws';
+import type { IncomingMessage } from 'node:http';
 
-// TODO: Replace all String() or "as type" conversions with better ones
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
+const HEARTBEAT_INTERVAL = 41250;
+const TIMEOUT_INTERVAL = 65000;
 
-const rtcServer = {
-  port: null as number | null,
-  signalingServer: null as WebSocketServer | null,
-  debug_logs: false,
-  clients: new Map(),
-  emitter: null as EventEmitter | null,
-  protocolsMap: new Map(),
-  debug(message) {
-    if (!this.debug_logs) {
-      return;
+export class RtcServer extends EventEmitter {
+  private signalingServer: WebSocketServer | null = null;
+  public clients = new Map<string, WebSocket>();
+  public protocolsMap = new Map();
+  private debug_logs = false;
+
+  constructor() {
+    super();
+  }
+
+  public debug(message: string) {
+    if (this.debug_logs) {
+      logText(message, 'RTC_SERVER');
     }
+  }
 
-    logText(message, 'RTC_SERVER');
-  },
-  randomKeyBuffer() {
+  public randomKeyBuffer() {
     return sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-  },
-  async handleClientConnect(socket, req) {
-    this.debug(`Client has connected`);
+  }
+  
+  private getClientInfo(req: IncomingMessage) {
+    const userAgent = req.headers['user-agent'] ?? DEFAULT_USER_AGENT;
+    const xForwardedFor = req.headers['x-forwarded-for'];
+    const Ip = Array.isArray(xForwardedFor) ? xForwardedFor[0] : xForwardedFor?.split(',')[0] || req.socket.remoteAddress || '0.0.0.0'
 
-    socket.userAgent =
-      req.headers['user-agent'] ??
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36';
-    socket.isChrome = /Chrome/.test(socket.userAgent);
-    socket.ip_address = (req.headers['x-forwarded-for'] || req.socket.remoteAddress)
-      .split(',')[0]
-      .trim();
+    return {
+      userAgent, 
+      ipAddress: Ip.trim(),
+      isChrome: /Chrome/.test(userAgent)
+    }
+  }
 
-    socket.send(
-      JSON.stringify({
-        op: OPCODES.HEARTBEAT_INFO,
-        d: {
-          heartbeat_interval: 41250,
-        },
-      }),
-    );
-
-    socket.hb = {
-      timeout: setTimeout(
-        async () => {
-          socket.close(4009, 'Session timed out');
-        },
-        45 * 1000 + 20 * 1000,
-      ),
-      reset: () => {
-        if (socket.hb.timeout != null) {
-          clearInterval(socket.hb.timeout);
-        }
-
-        socket.hb.timeout = setTimeout(
-          async () => {
-            socket.close(4009, 'Session timed out');
-          },
-          45 * 1000 + 20 * 1000,
-        );
-      },
-      acknowledge: (d) => {
-        const session = socket.session;
-        const base = {
-          op: OPCODES.HEARTBEAT_ACK,
-          d: d,
-        };
-        const payload = session ? base : JSON.stringify(base);
-        (session || socket).send(payload);
-      },
+  private setupHeartbeat(socket: WebSocket) {
+    const clear = () => {
+      if (socket.hb?.timeout) {
+        clearTimeout(socket.hb.timeout);
+      }
     };
 
-    socket.on('close', () => this.handleClientClose(socket));
-    socket.on('message', (data) => this.handleClientMessage(socket, data));
-  },
-  async handleClientClose(socket) {
-    for (const [id, clientSocket] of this.clients) {
-      if (id !== socket.userid) {
-        clientSocket.send(
-          JSON.stringify({
-            op: OPCODES.DISCONNECT,
-            d: {
-              user_id: socket.userid,
-            },
-          }),
-        );
+    const reset = () => {
+      clear();
+
+      if (socket.hb) {
+        socket.hb.timeout = setTimeout(() => {
+          socket.close(4009, 'Session timed out');
+        }, TIMEOUT_INTERVAL);
       }
-    }
+    };
 
-    if (socket.userid) {
-      this.clients.delete(socket.userid);
-    }
-  },
-  async handleClientMessage(socket, data) {
+    return { reset, clear };
+  }
+
+  public async handleClientConnect(socket: WebSocket, req: IncomingMessage) {
+    const {
+      userAgent,
+      ipAddress,
+      isChrome
+    } = this.getClientInfo(req);
+
+    socket.userAgent = userAgent;
+    socket.isChrome = isChrome;
+    socket.ip_address = ipAddress;
+
+    this.debug(`Client connected from ${ipAddress}`);
+
+    const hb = this.setupHeartbeat(socket);
+
+    hb.reset();
+
+    socket.send(JSON.stringify({
+      op: OPCODES.HEARTBEAT_INFO,
+      d: { 
+        heartbeat_interval: HEARTBEAT_INTERVAL 
+      },
+    }));
+
+    socket.on('message', (data) => this.handleClientMessage(socket, data, hb.reset));
+    socket.on('close', () => this.handleClientClose(socket, hb.clear));
+    socket.on('error', (err) => this.debug(`Socket error: ${err.message}`));
+  }
+
+  private async handleClientMessage(socket: WebSocket, data: any, resetHb: () => void) {
     try {
-      const raw_data = Buffer.from(data).toString('utf-8');
-      const packet: GatewayPayload = GatewayPayloadSchema.parse(JSON.parse(raw_data));
+      resetHb();
 
-      this.debug(`Incoming -> ${raw_data}`);
+      const payload: GatewayPayload = GatewayPayloadSchema.parse(JSON.parse(data.toString()));
+      
+      this.debug(`Incoming OP ${payload.op}`);
 
-      await rtcHandlers[packet.op]?.(socket, packet);
+      await rtcHandlers[payload.op]?.(socket, payload);
     } catch (error) {
-      logText(error, 'error');
+      logText(`Invalid Payload: ${error}`, 'error');
 
       socket.close(4000, 'Invalid payload');
     }
-  },
-  start(server, port, debug_logs) {
-    this.emitter = new EventEmitter();
-    this.port = port;
+  }
+
+  private handleClientClose(socket: WebSocket, clearHb: () => void) {
+    clearHb();
+
+    const userId = socket.user_id;
+    
+    if (userId) {
+      this.clients.delete(userId);
+      this.broadcast({ op: OPCODES.DISCONNECT, d: { user_id: userId } }, userId);
+    }
+  }
+
+  private broadcast(payload: any, excludeId?: string) {
+    const data = JSON.stringify(payload);
+
+    for (const [id, client] of this.clients) {
+      if (id !== excludeId && client.readyState === 1) {
+        client.send(data);
+      }
+    }
+  }
+
+  public async start(server: any, debug_logs = false) {
+    await sodium.ready;
+
     this.debug_logs = debug_logs;
-    this.signalingServer = new WebSocketServer({
-      server: server,
-    });
+    this.signalingServer = new WebSocketServer({ server });
+    this.signalingServer.on('connection', (ws, req) => this.handleClientConnect(ws, req));
 
-    this.signalingServer.on('listening', async () => {
-      await sodium.ready;
+    this.debug(`RTC Server initialized`);
+  }
+}
 
-      this.debug(`Server up on port ${this.port}`);
-    });
-
-    this.signalingServer.on('connection', this.handleClientConnect.bind(this));
-  },
-};
-
-export default rtcServer;
+export default new RtcServer();

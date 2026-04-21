@@ -4,36 +4,18 @@ import dispatcher from '../../helpers/dispatcher.ts';
 import errors from '../../helpers/errors.ts';
 import globalUtils from '../../helpers/globalutils.ts';
 import { logText } from '../../helpers/logger.ts';
-import { rateLimitMiddleware, userMiddleware } from '../../helpers/middlewares.ts';
-import quickcache from '../../helpers/quickcache.ts';
-import Watchdog from '../../helpers/watchdog.ts';
+import { cacheForMiddleware, rateLimitMiddleware, userMiddleware } from '../../helpers/middlewares.ts';
 import me from './me/index.js';
-import type { NextFunction, Response } from "express";
+import type { Request, Response } from "express";
 import { prisma } from '../../prisma.ts';
+import type { User } from '../../types/user.ts';
 
 const router = Router();
 
-router.param('userid', async (req: any, _res: Response, next: NextFunction, userid: string) => {
-  if (userid === '@me') {
-    userid = req.account.id;
-  }
-
-  req.user = await prisma.user.findUnique({
-    where: {
-      id: userid,
-    },
-    include: {
-      staff: true,
-    }
-  });
-
-  next();
-});
-
 router.use('/@me', me);
 
-router.get('/:userid', userMiddleware, quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
-  return res.status(200).json(globalUtils.miniUserObject(req.user));
+router.get('/:userid', userMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
+  return res.status(200).json(globalUtils.miniUserObject(req.user as User));
 });
 
 //new dm system / group dm system
@@ -43,15 +25,10 @@ router.post(
     global.config.ratelimit_config.createPrivateChannel.maxPerTimeFrame,
     global.config.ratelimit_config.createPrivateChannel.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.createPrivateChannel.maxPerTimeFrame,
-    global.config.ratelimit_config.createPrivateChannel.timeFrame,
-    0.5,
-  ),
-  async (req: any, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       let recipients = req.body.recipients;
-      const account = req.account;
+      const account = req.account!!;
 
       if (req.body.recipient_id) {
         recipients = [req.body.recipient_id];
@@ -74,6 +51,7 @@ router.post(
       }
 
       let validRecipientIDs: string[] = [];
+      
       const map = {};
 
       validRecipientIDs.push(account.id);
@@ -160,7 +138,7 @@ router.post(
       const pChannel = globalUtils.personalizeChannelObject(req, channel);
 
       if (type == 3) await globalUtils.pingPrivateChannel(channel);
-      else await dispatcher.dispatchEventTo(account, 'CHANNEL_CREATE', pChannel);
+      else await dispatcher.dispatchEventTo(account.id, 'CHANNEL_CREATE', pChannel);
 
       return res.status(200).json(pChannel);
     } catch (error) {
@@ -171,10 +149,10 @@ router.post(
   },
 );
 
-router.get('/:userid/profile', userMiddleware, quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
+router.get('/:userid/profile', userMiddleware, async (req: Request, res: Response) => {
   try {
-    const account = req.account;
-    const user = req.user;
+    const account = req.account!!;
+    const user = req.user!!;
     const ret: any = {};
 
     const guilds = await prisma.guild.findMany({
@@ -224,7 +202,7 @@ router.get('/:userid/profile', userMiddleware, quickcache.cacheFor(60 * 5), asyn
       if (ourFriends.length > 0 && theirFriends.length > 0) {
         const theirFriendsSet = new Set(
           theirFriends.map((friend) => friend.user.id && friend.type == 1),
-        );
+        ) as Set<string>;
 
         for (const ourFriend of ourFriends) {
           if (theirFriendsSet.has(ourFriend.user.id) && ourFriend.type == 1) {
@@ -275,9 +253,9 @@ router.get('/:userid/profile', userMiddleware, quickcache.cacheFor(60 * 5), asyn
 
 //Never share this cache because it's mutuals and whatnot, different for each requester
 //We're gonna remove the userMiddleware from this since it needs to work on users we're friends with without any guilds in common
-router.get('/:userid/relationships', quickcache.cacheFor(60 * 5), async (req: any, res: Response) => {
+router.get('/:userid/relationships', async (req: Request, res: Response) => {
   try {
-    const account = req.account;
+    const account = req.account!!;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
@@ -287,11 +265,7 @@ router.get('/:userid/relationships', quickcache.cacheFor(60 * 5), async (req: an
       return res.status(200).json([]);
     } //Return [] for the deleted user account
 
-    const user = req.user;
-
-    if (!user) {
-      return res.status(404).json(errors.response_404.UNKNOWN_USER);
-    }
+    const user = req.user!!;
 
     if (user.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
@@ -299,8 +273,7 @@ router.get('/:userid/relationships', quickcache.cacheFor(60 * 5), async (req: an
 
     const ourFriends = account.relationships;
     const theirFriends = user.relationships;
-
-    const sharedFriends: any = [];
+    const sharedFriends: User[] = [];
 
     for (var ourFriend of ourFriends) {
       for (var theirFriend of theirFriends) {

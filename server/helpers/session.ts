@@ -2,10 +2,23 @@ import { constants, deflateSync } from 'zlib';
 
 import dispatcher from './dispatcher.ts';
 import globalUtils from './globalutils.ts';
-import Intents from './intents.ts';
+import Intents, { IntentBit } from './intents.ts';
 import lazyRequest from './lazyRequest.ts';
 import { logText } from './logger.ts';
 import { prisma } from '../prisma.ts';
+import { AccountService } from '../api/services/accountService.ts';
+import { OAuthService } from '../api/services/oauthService.ts';
+import { ChannelType, type Channel } from '../types/channel.ts';
+import { ChannelService } from '../api/services/channelService.ts';
+import type { Account } from '../types/account.ts';
+import { GuildService } from '../api/services/guildService.ts';
+import type { Member } from '../types/member.ts';
+import type { User } from '../types/user.ts';
+import type { Session } from '../types/session.ts';
+import type { Relationship } from '../types/relationship.ts';
+import permissions from './permissions.ts';
+import ctx from '../context.ts';
+import type { Guild } from '../types/guild.ts';
 
 let erlpack: any = null;
 
@@ -22,24 +35,23 @@ try {
 const BUFFER_LIMIT = 500; //max dispatch event backlog before terminating?
 const SESSION_TIMEOUT = 10 * 1000; //10 seconds brooo
 
-class session {
-  private id: string;
-  private socket: any;
-  private user: any;
-  private ready: boolean;
-  private presence: any;
-  private type: string;
-  private dead: boolean;
-  private ratelimited: boolean;
-  private guilds: any[];
-  private unavailable_guilds: any[];
-  private presences: any[];
-  private read_states: any[];
-  private relationships: any[];
-  private guildCache: any;
-  private apiVersion: number;
-  private application: any;
-  private timeout: any;
+class session implements Session {
+  public id: string;
+  public socket: any;
+  public user: Account;
+  public ready: boolean;
+  public presence: any;
+  public type: 'gateway' | 'voice';
+  public dead: boolean;
+  public ratelimited: boolean;
+  public unavailable_guilds: any[];
+  public presences: any[];
+  public read_states: any[];
+  public relationships: Relationship[];
+  public guildCache: Guild[];
+  public apiVersion: number;
+  public application: any;
+  public timeout: any;
 
   public lastMessage: number;
   public seq: number;
@@ -47,8 +59,8 @@ class session {
   public token: string;
   public time: number;
   public last_idle: number;
-  public channel_id: number;
-  public guild_id: number;
+  public channel_id: string;
+  public guild_id: string;
   public subscriptions: any;
   public memberListCache: any;
   public capabilities: any;
@@ -60,9 +72,9 @@ class session {
     token: string,
     ready: boolean,
     presence: any,
-    guild_id = 0,
-    channel_id = 0,
-    type = 'gateway',
+    type: 'gateway' | 'voice',
+    guild_id = "0",
+    channel_id = "0",
     apiVersion = 3,
     capabilities: any,
   ) {
@@ -74,7 +86,7 @@ class session {
     this.time = Date.now();
     this.ready = ready;
     this.presence = presence;
-    this.type = type ?? 'gateway'; //or voice
+    this.type = type;
     this.dead = false;
     this.lastMessage = Date.now();
     this.ratelimited = false;
@@ -82,7 +94,6 @@ class session {
     this.channel_id = channel_id;
     this.guild_id = guild_id;
     this.eventsBuffer = [];
-    this.guilds = [];
     this.unavailable_guilds = [];
     this.presences = [];
     this.read_states = [];
@@ -118,14 +129,14 @@ class session {
       if (!valid_status.includes(status.toLowerCase())) return;
 
       if (status.toLowerCase() != 'offline' && save_presence) {
-        this.user.settings.status = status.toLowerCase();
+        this.user.settings!.status = status.toLowerCase();
 
         await prisma.user.update({
           where: {
             id: this.user.id
           },
           data: {
-            settings: this.user.settings
+            settings: this.user.settings as any
           }
         });
 
@@ -145,7 +156,7 @@ class session {
       logText(error, 'error');
     }
   }
-  async dispatch(type, payload) {
+  async dispatch(type: string, payload: any) {
     if (this.type !== 'gateway' || !this.ready || this.dead) {
       return;
     }
@@ -155,16 +166,19 @@ class session {
       payload = await payload.call(this);
     }
 
-    const userBitfield = global.gatewayIntentMap.get(this.user.id);
+    const userBitfield = ctx.gatewayIntentMap.get(this.user.id);
+    
     let requiredBit;
-    const DEFAULT_BOT_INTENTS = global.config.default_bot_intents ?? {
+
+    const DEFAULT_BOT_INTENTS = ctx.config?.default_bot_intents ?? {
       value: 46847,
     };
-    const DEFAULT_USER_INTENTS = global.config.default_user_intents ?? {
+
+    const DEFAULT_USER_INTENTS = ctx.config?.default_user_intents ?? {
       value: 67108863,
     };
 
-    if (global.config.intents_required && userBitfield === undefined) {
+    if (ctx.config?.intents_required && userBitfield === undefined) {
       return;
     }
 
@@ -182,12 +196,12 @@ class session {
     }
 
     if (requiredBit !== undefined) {
-      if ((activeBitfield & requiredBit) === 0) {
+      if ((Number(activeBitfield) & requiredBit) === 0) {
         return;
       }
     } //gateway intents of course
 
-    const hasContentIntent = (activeBitfield & (1 << 15)) !== 0;
+    const hasContentIntent = (Number(activeBitfield) & (IntentBit.MESSAGE_CONTENT)) !== 0;
 
     if (!hasContentIntent && (type === 'MESSAGE_CREATE' || type === 'MESSAGE_UPDATE')) {
       payload = {
@@ -228,33 +242,21 @@ class session {
     if (this.type !== 'gateway') return;
 
     const presence = this.presence;
+
     if (presenceOverride != null) {
       presence.status = presenceOverride;
     }
 
-    const current_guilds = await prisma.guild.findMany({
+    const guilds = await prisma.guild.findMany({
       where: {
-        members: {
-          some: {
-            user_id: this.user.id
-          }
-        }
+        members: { some: { user_id: this.user.id } }
       },
       include: {
-        channels: true,
-        roles: true,
-        members: {
-          include: {
-            user: true
-          }
-        }
+        members: { where: { user_id: this.user.id } }
       }
     });
 
-    this.guilds = current_guilds;
-
-    for (let i = 0; i < current_guilds.length; i++) {
-      const guild = current_guilds[i];
+    for(const guild of guilds) {
       const broadcastStatus = presence.status === 'invisible' ? 'offline' : presence.status;
 
       const guildSpecificPresence = {
@@ -263,11 +265,11 @@ class session {
         activities: [],
         guild_id: guild.id,
         user: globalUtils.miniUserObject(this.user),
-        roles: guild.members.find((x: any) => x.id === this.user.id)?.roles || [],
+        roles: guild.members.find((x) => x.user_id === this.user.id)?.roles as string[] || [],
       };
 
-      await dispatcher.dispatchEventInGuild(guild, 'PRESENCE_UPDATE', guildSpecificPresence);
-      await lazyRequest.syncMemberList(guild, this.user.id);
+      await dispatcher.dispatchEventInGuild(guild.id, 'PRESENCE_UPDATE', guildSpecificPresence);
+      await lazyRequest.syncMemberList(GuildService._formatResponse(guild), this.user.id);
     }
   }
   async dispatchSelfUpdate() {
@@ -275,39 +277,33 @@ class session {
       return;
     }
 
-    const current_guilds = await prisma.guild.findMany({
+     const guilds = await prisma.guild.findMany({
       where: {
-        members: {
-          some: {
-            user_id: this.user.id
-          }
-        }
+        members: { some: { user_id: this.user.id } }
       },
       include: {
-        channels: true,
-        roles: true,
-        members: {
-          include: {
-            user: true
-          }
-        }
+        members: { where: { user_id: this.user.id } }
       }
     });
 
-    this.guilds = current_guilds;
+    for (const guild of guilds) {
+      const our_member_row = guild.members.find((x) => x.user_id === this.user.id);
+      
+      if (!our_member_row) continue;
 
-    if (current_guilds.length == 0) return;
+      const our_member = {
+        user: globalUtils.miniUserObject(this.user),
+        id: this.user.id,
+        joined_at: new Date().toISOString(),
+        deaf: our_member_row.deaf,
+        roles: our_member_row.roles as string[],
+        mute: our_member_row.mute,
+        nick: our_member_row.nick
+      } as Member;
 
-    for (let i = 0; i < current_guilds.length; i++) {
-      const guild = current_guilds[i];
-
-      const our_member: any = guild.members.find((x: any) => x.id === this.user.id);
-
-      if (!our_member) continue;
-
-      await dispatcher.dispatchEventInGuild(guild, 'GUILD_MEMBER_UPDATE', {
+      await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_UPDATE', {
         roles: our_member.roles,
-        user: globalUtils.miniUserObject(our_member.user),
+        user: globalUtils.miniUserObject(this.user),
         guild_id: guild.id,
       });
     }
@@ -315,19 +311,19 @@ class session {
   async terminate() {
     if (!this.dead) return; //resumed in time, lucky bastard
 
-    let uSessions = global.userSessions.get(this.user.id);
+    let uSessions = ctx.userSessions.get(this.user.id);
 
     if (uSessions) {
       uSessions = uSessions.filter((s) => s.id !== this.id);
 
       if (uSessions.length >= 1) {
-        global.userSessions.set(this.user.id, uSessions);
+        ctx.userSessions.set(this.user.id, uSessions);
       } else {
-        global.userSessions.delete(this.user.id);
+        ctx.userSessions.delete(this.user.id);
       }
     }
 
-    global.sessions.delete(this.id);
+    ctx.sessions.delete(this.id);
 
     if (this.type === 'gateway') {
       if (!uSessions || uSessions.length === 0) {
@@ -339,7 +335,7 @@ class session {
       }
     }
   }
-  send(payload) {
+  send(payload: any) {
     if (this.dead) return;
     if (this.ratelimited) return;
 
@@ -370,20 +366,20 @@ class session {
     this.lastMessage = Date.now();
   }
   start() {
-    global.sessions.set(this.id, this);
+    ctx.sessions.set(this.id, this);
 
     if (this.type === 'gateway') {
-      let uSessions = global.userSessions.get(this.user.id);
+      let uSessions = ctx.userSessions.get(this.user.id);
 
       if (!uSessions) {
         uSessions = [];
       }
 
       uSessions.push(this);
-      global.userSessions.set(this.user.id, uSessions);
+      ctx.userSessions.set(this.user.id, uSessions);
     }
   }
-  async readyUp(body) {
+  async readyUp(body: any) {
     if (this.type === 'gateway') {
       this.send({
         op: 0,
@@ -395,7 +391,7 @@ class session {
 
     this.ready = true;
   }
-  async resume(seq, socket) {
+  async resume(seq: number, socket: WebSocket) {
     if (this.timeout) {
       clearTimeout(this.timeout);
       this.timeout = null;
@@ -423,33 +419,26 @@ class session {
       return;
     }
 
-    const merged_members: any[] = [];
+    const merged_members: Member[] = [];
 
     try {
       const month = this.socket.client_build_date.getMonth();
       const year = this.socket.client_build_date.getFullYear();
-
-      this.guilds = await prisma.guild.findMany({
+      const guilds_rows = await prisma.guild.findMany({
         where: {
-          members: {
-            some: {
-              user_id: this.user.id
-            }
-          }
+          members: { some: { user_id: this.user.id } }
         },
         include: {
-          channels: true,
-          roles: true,
-          members: {
-            include: {
-              user: true
-            }
-          }
+          members: { where: { user_id: this.user.id } }
         }
       });
 
+      let guilds = guilds_rows.map((guild) => {
+        return GuildService._formatResponse(guild)
+      });
+
       if (this.user.bot) {
-        for (let guild of this.guilds) {
+        for (let guild of guilds) {
           this.guildCache.push(guild);
 
           guild = {
@@ -458,20 +447,16 @@ class session {
           }; //bots cant get this here idk
         }
       } else {
-        for (let guild of this.guilds as any) {
+        for (let guild of guilds) {
           if (guild.unavailable) {
-            this.guilds = this.guilds.filter((x) => x.id !== guild.id);
-
+            guilds = guilds.filter((x) => x.id !== guild.id);
             this.unavailable_guilds.push(guild.id);
-
             continue;
           }
 
           if (globalUtils.unavailableGuildsStore.includes(guild.id)) {
-            this.guilds = this.guilds.filter((x) => x.id !== guild.id);
-
+            guilds = guilds.filter((x) => x.id !== guild.id);
             this.unavailable_guilds.push(guild.id);
-
             continue;
           }
 
@@ -483,14 +468,32 @@ class session {
             });
           }
 
-          if (guild.region != 'everything' && !globalUtils.canUseServer(year, guild.region)) {
+          const guildMembers = await prisma.member.findMany({
+            where: { guild_id: guild.id },
+            include: {
+              user: true
+            }
+          });
+
+          const formattedMembers = guildMembers.map((m) => {
+            return {
+              user: globalUtils.miniUserObject(m.user as User),
+              roles: m.roles,
+              nick: m.nick,
+              joined_at: m.joined_at,
+              deaf: m.deaf,
+              mute: m.mute
+            } as Member;
+          }) as Member[];
+
+          if (guild.region != 'everything' && !globalUtils.canUseServer(year, guild.region!!)) {
             let msgid = `12792182114301050${Math.round(Math.random() * 100).toString()}`;
 
             guild.channels = [
               {
                 type: this.socket.channel_types_are_ints ? 0 : 'text',
                 name: 'readme',
-                topic: `This server only supports ${globalUtils.serverRegionToYear(guild.region)} builds! Please change your client and try again.`,
+                topic: `This server only supports ${globalUtils.serverRegionToYear(guild.region!!)} builds! Please change your client and try again.`,
                 last_message_id: msgid,
                 id: msgid,
                 parent_id: null,
@@ -513,42 +516,10 @@ class session {
               },
             ];
 
-            guild.name = `${globalUtils.serverRegionToYear(guild.region)} ONLY! CHANGE BUILD`;
+            guild.name = `${globalUtils.serverRegionToYear(guild.region!!)} ONLY! CHANGE BUILD`;
             guild.owner_id = '643945264868098049';
 
-            merged_members.push([
-              {
-                id: '643945264868098049',
-                user: {
-                  username: 'Oldcord',
-                  discriminator: '0000',
-                  bot: true,
-                  id: '643945264868098049',
-                  avatar: null,
-                },
-                roles: [],
-                joined_at: new Date().toISOString(),
-                flags: 0,
-                guild: {
-                  id: guild.id,
-                },
-                guild_id: guild.id,
-              },
-              ...guild.members.map((x) => {
-                return {
-                    nick: x.nick,
-                    roles: x.roles,
-                    joined_at: x.joined_at,
-                    deaf: x.deaf,
-                    mute: x.mute,
-                    user: globalUtils.miniUserObject(x.user), 
-                    guild: {
-                        id: guild.id,
-                    },
-                    guild_id: guild.id,
-                };
-              }),
-            ]);
+            merged_members.push(...formattedMembers);
 
             guild.properties = structuredClone(guild);
 
@@ -559,7 +530,7 @@ class session {
             continue;
           }
 
-          let guild_presences = globalUtils.getGuildPresences(guild);
+          let guild_presences = await globalUtils.getGuildPresences(guild.id);
 
           if (guild_presences.length == 0)
             continue;
@@ -578,53 +549,32 @@ class session {
             });
           }
 
-          //if (guild.members.length >= 100) {
-          //guild.members = [
-          //guild.members.find(x => x.id === this.user.id)
-          //]
-          //} //someone really do this better
+          merged_members.push(...formattedMembers);
 
-          merged_members.push(
-            guild.members.map((x) => {
-              return {
-                  user: globalUtils.miniUserObject(x.user), 
-                  roles: x.roles,
-                  nick: x.nick,
-                  joined_at: x.joined_at,
-                  deaf: x.deaf,
-                  mute: x.mute,
-                  guild_id: guild.id,
-                  guild: {
-                    id: guild.id,
-                  },
-                };
-              }),
-          );
-
-          for (let channel of guild.channels) {
+          for (let channel of guild.channels!!) {
             if ((year === 2017 && month < 9) || year < 2017) {
-              if (channel.type === 4) {
-                guild.channels = guild.channels.filter((x) => x.id !== channel.id);
+              if (channel.type === ChannelType.CATEGORY) {
+                guild.channels = guild.channels!!.filter((x) => x.id !== channel.id);
               }
             }
 
-            if (year < 2019 && channel.type === 5) {
-              channel.type = 0;
+            if (year < 2019 && channel.type === ChannelType.NEWS) {
+              channel.type = ChannelType.TEXT;
             }
 
             if (!this.socket.channel_types_are_ints) {
               channel.type = channel.type == 2 ? 'voice' : 'text';
             }
 
-            const can_see = global.permissions.hasChannelPermissionTo(
-              channel,
-              guild,
+            const can_see = permissions.hasChannelPermissionTo(
+              channel.id,
+              guild.id,
               this.user.id,
               'READ_MESSAGES',
             );
 
             if (!can_see) {
-              guild.channels = guild.channels.filter((x) => x.id !== channel.id);
+              guild.channels = guild.channels!!.filter((x) => x.id !== channel.id);
 
               continue;
             }
@@ -710,18 +660,11 @@ class session {
       const users = new Set();
 
       for (const chan_id of chans) {
-        let chan = await prisma.channel.findUnique({
-          where: {
-            id: chan_id
-          },
-          include: {
-            recipients: true
-          }
-        });
+        let chan = await ChannelService.getChannelById(chan_id);
 
         if (!chan) continue;
 
-        chan = globalUtils.personalizeChannelObject(this.socket, chan);
+        chan = globalUtils.personalizeChannelObject(this.socket, chan as Channel);
 
         if (!chan) continue;
 
@@ -735,17 +678,16 @@ class session {
         filteredDMs.push(chan);
       }
 
-      const connectedAccounts = await global.database.getConnectedAccounts(this.user.id);
-      const guildSettings = await global.database.getUsersGuildSettings(this.user.id);
-      const notes = await global.database.getNotesByAuthorId(this.user.id);
+      const connectedAccounts = await AccountService.getConnectedAccounts(this.user.id);
+      const guildSettings = this.user.guild_settings;
+      const notes = await AccountService.getNotes(this.user.id);
 
-      this.relationships = this.user.relationships;
-
-      this.application = await global.database.getApplicationById(this.user.id);
+      this.relationships = this.user.relationships!!;
+      this.application = await OAuthService.getApplicationById(this.user.id);
 
       this.readyUp({
         v: this.apiVersion,
-        guilds: this.guilds ?? [],
+        guilds: guilds ?? [],
         presences: this.presences ?? [],
         private_channels: filteredDMs,
         relationships: this.relationships ?? [],
@@ -786,7 +728,7 @@ class session {
             : (guildSettings ?? []),
         heartbeat_interval: 45 * 1000,
         // v9 responses
-        resume_gateway_url: globalUtils.generateGatewayURL({ headers: { host: null } }), // we sould have a better way for this
+        resume_gateway_url: globalUtils.generateGatewayURL(null), // we should have a better way for this
         sessions: [
           { session_id: this.id, client_info: { client: 'unknown', os: 'unknown', version: null } },
         ],
@@ -806,7 +748,7 @@ class session {
       }
 
       if (this.user.bot) {
-        for (let guild of this.guilds) {
+        for (let guild of guilds) {
           if (guild.unavailable) {
             await this.dispatch(
               'GUILD_CREATE',

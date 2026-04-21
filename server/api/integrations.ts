@@ -1,12 +1,10 @@
 import { Router } from 'express';
 
 import { logText } from '../helpers/logger.ts';
-import { rateLimitMiddleware } from '../helpers/middlewares.ts';
-import { cacheFor } from '../helpers/quickcache.ts';
+import { cacheForMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
 const router = Router({ mergeParams: true });
 import { response_500 } from '../helpers/errors.ts';
-import { middleware } from '../helpers/watchdog.ts';
-import type { Response } from "express";
+import type { Request, Response } from "express";
 
 router.get(
   '/tenor/search',
@@ -14,13 +12,8 @@ router.get(
     global.config.ratelimit_config.tenorSearch.maxPerTimeFrame,
     global.config.ratelimit_config.tenorSearch.timeFrame,
   ),
-  middleware(
-    global.config.ratelimit_config.tenorSearch.maxPerTimeFrame,
-    global.config.ratelimit_config.tenorSearch.timeFrame,
-    0.1,
-  ),
-  cacheFor(60 * 30, true),
-  async (req: any, res: Response) => {
+  cacheForMiddleware(60 * 30, "public", true),
+  async (req: Request, res: Response) => {
     try {
       const query = req.query.q;
 

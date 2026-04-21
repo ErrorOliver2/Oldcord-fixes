@@ -1,39 +1,45 @@
 import { Router } from 'express';
 import type { Request, Response } from "express"
-
 import { config, generateGatewayURL } from '../../helpers/globalutils.js';
+import type { SpacebarInstanceDomains } from '../../types/spacebar.ts';
+import type { SpacebarInstanceConfig } from '../../types/spacebar.ts';
+
 const router = Router();
 
-router.get('/instance/domains', (req, res: Response) => {
-  return res.json({
+router.get('/instance/domains', (req: Request, res: Response) => {
+  const instanceDomainsResponse: SpacebarInstanceDomains = {
     cdn: `${config.secure ? 'https://' : 'http://'}${global.full_url}`, //for user uploaded attachments
     gateway: generateGatewayURL(req),
     defaultApiVersion: '6',
     apiEndpoint: `${config.secure ? 'https://' : 'http://'}${global.full_url}/api`,
-  });
+  };
+
+  return res.json(instanceDomainsResponse);
 });
 
 router.get('/instance/config', (_req: Request, res: Response) => {
-  return res.json({
-    limits_user_maxGuilds: null,
-    limits_user_maxBio: null,
-    limits_guild_maxEmojis: null,
-    limits_guild_maxRoles: null,
-    limits_message_maxCharacters: null,
-    limits_message_maxAttachmentSize: null,
-    limits_message_maxEmbedDownloadSize: null,
-    limits_channel_maxWebhooks: null,
-    register_dateOfBirth_requiredc: null,
-    register_password_required: null,
-    register_disabled: null,
-    register_requireInvite: null,
-    register_allowNewRegistration: null,
-    register_allowMultipleAccounts: null,
-    guild_autoJoin_canLeave: null,
-    guild_autoJoin_guilds_x: null,
-    register_email_required: null,
-    can_recover_account: null,
-  });
+  const instanceConfig: SpacebarInstanceConfig = {
+    limits_user_maxGuilds: 99999999999,
+    limits_user_maxBio: 99999999999,
+    limits_guild_maxEmojis: 99999999999,
+    limits_guild_maxRoles: 99999999999,
+    limits_message_maxCharacters: 99999999999,
+    limits_message_maxAttachmentSize: 99999999999,
+    limits_message_maxEmbedDownloadSize: 99999999999,
+    limits_channel_maxWebhooks: 99999999999,
+    register_dateOfBirth_required: false,
+    register_password_required: true,
+    register_disabled: false,
+    register_requireInvite: false,
+    register_allowNewRegistration: true,
+    register_allowMultipleAccounts: true,
+    guild_autoJoin_canLeave: true,
+    guild_autoJoin_guilds_x: [],
+    register_email_required: true,
+    can_recover_account: false, //Uhh depends really
+  };
+  
+  return res.json(instanceConfig);
 });
 
 export default router;

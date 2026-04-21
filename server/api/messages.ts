@@ -6,31 +6,32 @@ import { Jimp } from 'jimp';
 import multer from 'multer';
 import { extname, join } from 'path';
 
-import dispatcher from '../helpers/dispatcher.js';
-import errors from '../helpers/errors.js';
-import globalUtils from '../helpers/globalutils.js';
+import dispatcher from '../helpers/dispatcher.ts';
+import errors from '../helpers/errors.ts';
+import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
 import {
   channelPermissionsMiddleware,
   instanceMiddleware,
   rateLimitMiddleware,
-} from '../helpers/middlewares.js';
-import quickcache from '../helpers/quickcache.js';
-import Snowflake from '../helpers/snowflake.js';
-import Watchdog from '../helpers/watchdog.js';
-import reactions from './reactions.js';
+} from '../helpers/middlewares.ts';
+import Snowflake from '../helpers/snowflake.ts';
+import reactions from './reactions.ts';
+import { AccountService } from './services/accountService.ts';
+import { MessageService } from './services/messageService.ts';
+import type { NextFunction, Request, Response } from "express";
+import { ChannelType } from '../types/channel.ts';
+import type { Account } from '../types/account.ts';
+import { RelationshipType } from '../types/relationship.ts';
+import { GuildService } from './services/guildService.ts';
+import type { Message } from '../types/message.ts';
 
 const upload = multer();
 const router = Router({ mergeParams: true });
 
-router.param('messageid', async (req, res, next, messageid) => {
-  req.message = await global.database.getMessageById(messageid);
-  next();
-});
-
 router.use('/:messageid/reactions', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), reactions);
 
-function handleJsonAndMultipart(req, res, next) {
+function handleJsonAndMultipart(req: Request, res: Response, next: NextFunction) {
   const contentType = req.headers['content-type'];
   if (contentType && contentType.startsWith('multipart/form-data')) {
     upload.any()(req, res, next);
@@ -42,50 +43,46 @@ function handleJsonAndMultipart(req, res, next) {
 router.get(
   '/',
   channelPermissionsMiddleware('READ_MESSAGES'),
-  quickcache.cacheFor(15, false),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const creator = req.account;
-      const channel = req.channel;
+      const creator = req.account!!;
+      const channel = req.channel!!;
 
-      if (channel.type === 2) {
+      if (channel.type === ChannelType.VOICE) {
         return res.status(400).json({
           code: 400,
           message: 'Cannot get text messages from a voice channel.', //I mean we're cool with you doing that and everything but realistically, who is going to read these messages?
         }); //whats the proper response here?
       }
 
-      let limit = parseInt(req.query.limit) || 200;
-
-      if (limit > 200) {
-        limit = 200;
-      }
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+      const { around, before, after } = req.query as Record<string, string>;
 
       const includeReactions =
-        (req.guild && !req.guild.exclusions.includes('reactions')) ||
-        channel.type === 1 ||
-        channel.type === 3; //to-do get rid of magic numbers
-      const around = req.query.around;
-      let messages = [];
+        (req.guild && !req.guild.exclusions?.includes('reactions')) ||
+        channel.type === ChannelType.DM ||
+        channel.type === ChannelType.GROUPDM;
+
+      let messages: Message[];
 
       if (around) {
-        messages = await global.database.getMessagesAround(channel.id, around, limit);
+        messages = await MessageService.getMessagesAround(channel.id, around, limit);
       } else {
-        messages = await global.database.getChannelMessages(
+        messages = await MessageService.getChannelMessages(
           channel.id,
-          creator.id,
           limit,
-          req.query.before,
-          req.query.after,
-          includeReactions,
+          before,
+          after,
+          creator.id,
+          includeReactions
         );
       }
 
-      messages = messages.map((message) => {
-        return globalUtils.personalizeMessageObject(message, req.guild, req.client_build_date);
-      });
+      const personalized = messages.map((m) =>
+        globalUtils.personalizeMessageObject(m, req.guild, req.client_build_date)
+      );
 
-      return res.status(200).json(messages);
+      return res.status(200).json(personalized);
     } catch (error) {
       logText(error, 'error');
 
@@ -103,17 +100,13 @@ router.post(
     global.config.ratelimit_config.sendMessage.maxPerTimeFrame,
     global.config.ratelimit_config.sendMessage.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.sendMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.sendMessage.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const account = req.account;
+      const account = req.account!!;
       const author = account;
+      const channel = req.channel!!;
 
-      if (req.channel.type === 2) {
+      if (channel.type === ChannelType.VOICE) {
         return res.status(400).json({
           code: 400,
           message: 'Cannot send a text message in a voice channel.', //I mean we're cool with you doing that and everything but realistically, who is going to read these messages?
@@ -154,7 +147,7 @@ router.post(
         }
       }
 
-      let embeds = []; //So... discord removed the ability for users to create embeds in their messages way back in like 2020, killing the whole motive of self bots, but here at Oldcord, we don't care - just don't abuse our API.
+      let embeds: any[] = []; //So... discord removed the ability for users to create embeds in their messages way back in like 2020, killing the whole motive of self bots, but here at Oldcord, we don't care - just don't abuse our API.
 
       if (
         req.body.embeds &&
@@ -174,7 +167,7 @@ router.post(
           const embedObj = {
             type: 'rich',
             color: embed.color ?? 7506394,
-          };
+          } as any;
 
           if (embed.title) embedObj.title = embed.title;
           if (embed.description) embedObj.description = embed.description;
@@ -246,7 +239,7 @@ router.post(
 
       if (
         (mentions_data.mention_everyone || mentions_data.mention_here) &&
-        !global.permissions.hasChannelPermissionTo(
+        !permissions.hasChannelPermissionTo(
           req.channel,
           req.guild,
           author.id,
@@ -264,35 +257,34 @@ router.post(
       //Coerce tts field to boolean
       req.body.tts = req.body.tts === true || req.body.tts === 'true';
 
-      if (!req.channel.recipients) {
+      if (!channel.recipients) {
         if (!req.guild) {
           return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
         }
 
-        if (!req.channel.guild_id) {
+        if (!channel.guild_id) {
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
         }
       }
 
-      if (req.channel.recipients) {
+      if (channel.recipients) {
         //DM/Group channel rules
 
         //Disable @everyone and @here for DMs and groups
         mentions_data.mention_everyone = false;
         mentions_data.mention_here = false;
 
-        if (req.channel.type !== 1 && req.channel.type !== 3) {
+        if (channel.type !== ChannelType.DM && channel.type !== ChannelType.GROUPDM) {
           //Not a DM channel or group channel
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
         }
 
-        if (req.channel.type == 1) {
+        if (channel.type == ChannelType.DM) {
           //DM channel
 
           //Need a complete user object for the relationships
-          const recipientID =
-            req.channel.recipients[req.channel.recipients[0].id == author.id ? 1 : 0].id;
-          const recipient = await global.database.getAccountByUserId(recipientID);
+          const recipientID = channel.recipients[channel.recipients[0].id == author.id ? 1 : 0].id;
+          const recipient = await AccountService.getById(recipientID) as Account;
 
           if (!recipient) {
             return res.status(404).json(errors.response_404.UNKNOWN_USER);
@@ -306,7 +298,7 @@ router.post(
           if (!account.bot && !ourRelationshipState) {
             ourFriends.push({
               id: recipient.id,
-              type: 0,
+              type: RelationshipType.NONE,
               user: globalUtils.miniUserObject(recipient),
             });
 
@@ -316,23 +308,18 @@ router.post(
           if (!recipient.bot && !theirRelationshipState) {
             theirFriends.push({
               id: account.id,
-              type: 0,
+              type: RelationshipType.NONE,
               user: globalUtils.miniUserObject(account),
             });
 
             theirRelationshipState = theirFriends.find((x) => x.user.id == account.id);
           }
 
-          if (ourRelationshipState?.type === 2 || theirRelationshipState?.type === 2) {
+          if (ourRelationshipState?.type === RelationshipType.BLOCKED || theirRelationshipState?.type === RelationshipType.BLOCKED) {
             return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
           }
 
-          const recipientGuilds = await global.database.getUsersGuilds(recipient.id);
-          const ourGuilds = await global.database.getUsersGuilds(account.id);
-
-          const mutualGuilds = recipientGuilds.filter((rg) =>
-            ourGuilds.some((og) => og.id === rg.id),
-          );
+          const mutualGuilds = await GuildService.getMutualGuilds(recipient.id, account.id);
 
           if (recipient.bot && mutualGuilds.length === 0) {
              return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
@@ -340,8 +327,8 @@ router.post(
 
           if (!recipient.bot && !globalUtils.areWeFriends(account, recipient)) {
             const hasAllowedSharedGuild = mutualGuilds.some((guild) => {
-              const senderAllows = !account.settings.restricted_guilds.includes(guild.id);
-              const recipientAllows = !recipient.settings.restricted_guilds.includes(guild.id);
+              const senderAllows = !account.settings!.restricted_guilds!.includes(guild.id);
+              const recipientAllows = !recipient.settings!.restricted_guilds!.includes(guild.id);
 
               return senderAllows && recipientAllows;
             });
@@ -357,7 +344,7 @@ router.post(
         }
       } else {
         //Guild rules
-        const canUseEmojis = !req.guild.exclusions.includes('custom_emoji');
+        const canUseEmojis = !req.guild!!.exclusions!!.includes('custom_emoji');
 
         const emojiPattern = /<:[\w-]+:\d+>/g;
 
@@ -372,7 +359,7 @@ router.post(
 
         if (
           req.body.tts &&
-          !global.permissions.hasChannelPermissionTo(
+          !permissions.hasChannelPermissionTo(
             req.channel,
             req.guild,
             author.id,
@@ -384,22 +371,22 @@ router.post(
         }
 
         if (
-          req.channel.rate_limit_per_user > 0 &&
-          !global.permissions.hasChannelPermissionTo(
+          channel.rate_limit_per_user!! > 0 &&
+          !permissions.hasChannelPermissionTo(
             req.channel,
             req.guild,
             author.id,
             'MANAGE_CHANNELS',
           ) &&
-          !global.permissions.hasChannelPermissionTo(
+          !permissions.hasChannelPermissionTo(
             req.channel,
             req.guild,
             author.id,
             'MANAGE_MESSAGES',
           )
         ) {
-          const key = `${author.id}-${req.channel.id}`;
-          const ratelimit = req.channel.rate_limit_per_user * 1000;
+          const key = `${author.id}-${channel.id}`;
+          const ratelimit = channel.rate_limit_per_user!! * 1000;
           const currentTime = Date.now();
           const lastMessageTimestamp = global.slowmodeCache.get(key) || 0;
           const difference = currentTime - lastMessageTimestamp;
@@ -417,7 +404,7 @@ router.post(
         } //Slowmode implementation
       }
 
-      const file_details = [];
+      const file_details: any[] = [];
 
       if (req.files) {
         for (var file of req.files) {
@@ -431,7 +418,7 @@ router.post(
           const file_detail = {
             id: Snowflake.generate(),
             size: file.size,
-          };
+          } as any;
 
           file_detail.name = globalUtils
             .replaceAll(file.originalname, ' ', '_')
@@ -445,11 +432,11 @@ router.post(
             });
           }
 
-          const channelDir = join('.', 'www_dynamic', 'attachments', req.channel.id);
+          const channelDir = join('.', 'www_dynamic', 'attachments', channel.id);
           const attachmentDir = join(channelDir, file_detail.id);
           const file_path = join(attachmentDir, file_detail.name);
 
-          file_detail.url = `${globalUtils.config.secure ? 'https' : 'http'}://${globalUtils.config.base_url}${globalUtils.nonStandardPort ? `:${globalUtils.config.port}` : ''}/attachments/${req.channel.id}/${file_detail.id}/${file_detail.name}`;
+          file_detail.url = `${globalUtils.config.secure ? 'https' : 'http'}://${globalUtils.config.base_url}${globalUtils.nonStandardPort ? `:${globalUtils.config.port}` : ''}/attachments/${channel.id}/${file_detail.id}/${file_detail.name}`;
 
           if (!existsSync(attachmentDir)) {
             mkdirSync(attachmentDir, { recursive: true });
@@ -461,7 +448,7 @@ router.post(
 
           if (isVideo) {
             try {
-              await new Promise((resolve, reject) => {
+              await new Promise<void>((resolve, reject) => {
                 ffmpeg(file_path)
                   .on('end', () => {
                     ffprobe(file_path, (err, metadata) => {
@@ -521,55 +508,46 @@ router.post(
       }
 
       //Write message
-      const message = await global.database.createMessage(
-        req.guild ? req.guild.id : null,
-        req.channel.id,
-        author.id,
-        req.body.content,
-        req.body.nonce,
-        file_details,
-        req.body.tts,
-        mentions_data,
-        embeds,
-      );
+      const message = await MessageService.createMessage(req.guild?.id ?? null, channel.id, author.id, req.body.content, req.body.nonce, file_details, req.body.tts, mentions_data, embeds);
 
       if (!message) throw 'Message creation failed';
 
       if (mentions_data.mention_everyone || mentions_data.mention_here) {
         global.database
           .incrementMentions(
-            req.channel.id,
-            req.guild.id,
+            channel.id,
+            req.guild!!.id,
             mentions_data.mention_here ? 'here' : 'everyone',
           )
           .catch((err) => logText(err, 'error'));
       }
 
       //Dispatch to correct recipients(s) in DM, group, or guild
-      if (req.channel.recipients) {
-        await globalUtils.pingPrivateChannel(req.channel);
-        await dispatcher.dispatchEventInPrivateChannel(req.channel, 'MESSAGE_CREATE', message);
+      if (channel.recipients) {
+        await globalUtils.pingPrivateChannel(channel);
+        await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_CREATE', message);
       } else {
         await dispatcher.dispatchEventInChannel(
-          req.guild,
-          req.channel.id,
+          req.guild!!.id,
+          req.channel!!.id,
           'MESSAGE_CREATE',
           message,
         );
       }
 
       //Acknowledge immediately to author
-      const tryAck = await global.database.acknowledgeMessage(
-        author.id,
-        req.channel.id,
-        message.id,
-        0,
+      //gotta do this
+      const tryAck = await MessageService.acknowledgeMessage(
+          author.id,
+          req.channel!!.id,
+          message.id,
+          0,
       );
 
       if (!tryAck) throw 'Message acknowledgement failed';
 
       await dispatcher.dispatchEventTo(author.id, 'MESSAGE_ACK', {
-        channel_id: req.channel.id,
+        channel_id: req.channel!!.id,
         message_id: message.id,
         manual: false, //This is for if someone clicks mark as read
       });
@@ -591,21 +569,12 @@ router.delete(
     global.config.ratelimit_config.deleteMessage.maxPerTimeFrame,
     global.config.ratelimit_config.deleteMessage.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.deleteMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteMessage.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guy = req.account;
-      const message = req.message;
-
-      if (message == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
-      const channel = req.channel;
+      const guy = req.account!!;
+      const message = req.message!!;
+      const channel = req.channel!!;
+      const guild = req.guild!!;
 
       if (!channel.recipients && !channel.guild_id) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
@@ -615,7 +584,7 @@ router.delete(
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
       }
 
-      if (!(await global.database.deleteMessage(req.params.messageid)))
+      if (!(await MessageService.deleteMessage(req.params.messageid as string)))
         throw 'Message deletion failed';
 
       const payload = {
@@ -625,9 +594,9 @@ router.delete(
       };
 
       if (channel.recipients)
-        await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_DELETE', payload);
+        await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_DELETE', payload);
       else
-        await dispatcher.dispatchEventInChannel(req.guild, channel.id, 'MESSAGE_DELETE', payload);
+        await dispatcher.dispatchEventInChannel(guild.id, channel.id, 'MESSAGE_DELETE', payload);
 
       return res.status(204).send();
     } catch (error) {
@@ -645,26 +614,15 @@ router.patch(
     global.config.ratelimit_config.updateMessage.maxPerTimeFrame,
     global.config.ratelimit_config.updateMessage.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.updateMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.updateMessage.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
       if (req.body.content && req.body.content == '') {
-        return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
+        return res.status(403).json(errors.response_403.MISSING_PERMISSIONS); //This should be another error
       }
 
-      const caller = req.account;
-
-      let message = req.message;
-
-      if (message == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
-      const channel = req.channel;
+      const caller = req.account!!;
+      let message: Message | null = req.message!!;
+      const channel = req.channel!!;
 
       if (!channel.recipients && !channel.guild_id) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
@@ -677,7 +635,7 @@ router.patch(
       //TODO:
       //FIXME: this needs to use globalUtils.parseMentions
       if (req.body.content && req.body.content.includes('@everyone')) {
-        const pCheck = global.permissions.hasChannelPermissionTo(
+        const pCheck = permissions.hasChannelPermissionTo(
           req.channel,
           req.guild,
           message.author.id,
@@ -689,20 +647,14 @@ router.patch(
         }
       }
 
-      const update = await global.database.updateMessage(message.id, req.body.content);
+      const update = await MessageService.updateMessage(message.id, req.body.content);
 
       if (!update) throw 'Message update failed';
 
-      message = await global.database.getMessageById(req.params.messageid);
-
-      if (message == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
       if (channel.recipients)
-        await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_UPDATE', message);
+        await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_UPDATE', update);
       else
-        await dispatcher.dispatchEventInChannel(req.guild, channel.id, 'MESSAGE_UPDATE', message);
+        await dispatcher.dispatchEventInChannel(req.guild!!.id, channel.id, 'MESSAGE_UPDATE', update);
 
       return res.status(204).send();
     } catch (error) {
@@ -720,26 +672,21 @@ router.post(
     global.config.ratelimit_config.ackMessage.maxPerTimeFrame,
     global.config.ratelimit_config.ackMessage.timeFrame,
   ),
-  Watchdog.middleware(
-    global.config.ratelimit_config.ackMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.ackMessage.timeFrame,
-    0.5,
-  ),
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     try {
-      const guy = req.account;
-      const message = req.message;
-
-      if (message == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-      }
-
-      const channel = req.channel;
+      const guy = req.account!!;
+      const message = req.message!!;
+      const channel = req.channel!!;
       const manual = req.body.manual === true;
 
-      const tryAck = await global.database.acknowledgeMessage(guy.id, channel.id, message.id, 0);
+      const success = await MessageService.acknowledgeMessage(
+          guy.id,
+          channel.id,
+          message.id,
+          0
+      );
 
-      if (!tryAck) throw 'Message acknowledgement failed';
+      if (!success) throw 'Message acknowledgement failed';
 
       await dispatcher.dispatchEventTo(guy.id, 'MESSAGE_ACK', {
         channel_id: channel.id,

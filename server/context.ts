@@ -1,0 +1,51 @@
+import type { GatewayServer } from "./gateway.ts";
+import type Emailer from "./helpers/emailer.ts";
+import type MediasoupSignalingDelegate from "./helpers/webrtc/MediasoupSignalingDelegate.ts";
+import type { MediaRelayServer } from "./mrserver.ts";
+import type { RtcServer } from "./rtcserver.ts";
+import type { Config } from "./types/config.ts";
+import type { Session } from "./types/session.ts";
+import type { MediaCodec, Room, VoiceState } from "./types/voice.ts";
+import type { UdpServer } from "./udpserver.ts";
+ 
+interface AppContext {
+    gateway: GatewayServer | null;
+    sessions: Map<string, Session>;
+    userSessions: Map<string, Session[]>;
+    slowmodeCache: Map<string, number>;
+    guild_voice_states: Map<string, VoiceState[]>;
+    gatewayIntentMap: Map<string, Number>;
+    udpServer: UdpServer | null;
+    rtcServer: RtcServer | null;
+    using_media_relay: boolean;
+    mediaserver: MediasoupSignalingDelegate | null;
+    emailer: Emailer | null;
+    config: Config | null; 
+    mrServer: MediaRelayServer | null;
+    rooms: Room[];
+    MEDIA_CODECS: MediaCodec[];
+    full_url: string;
+    protocol_url: string;
+}
+
+const ctx: AppContext = {
+    gateway: null,
+    sessions: new Map(),
+    userSessions: new Map(),
+    slowmodeCache: new Map(),
+    guild_voice_states: new Map(),
+    gatewayIntentMap: new Map(),
+    udpServer: null,
+    rtcServer: null,
+    using_media_relay: false,
+    mediaserver: null,
+    emailer: null,
+    config: null,
+    mrServer: null,
+    rooms: [],
+    MEDIA_CODECS: [],
+    full_url: "",
+    protocol_url: ""
+};
+
+export default ctx;

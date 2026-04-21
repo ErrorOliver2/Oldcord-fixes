@@ -4,26 +4,16 @@ import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
 import { channelMiddleware } from '../helpers/middlewares.ts';
-import quickcache from '../helpers/quickcache.ts';
-import type { Response } from "express";
+import type { Response, Request } from "express";
 import { prisma } from '../prisma.ts';
-import globalUtils from '../helpers/globalutils.ts';
+import { MessageService } from './services/messageService.ts';
+import { MessageType } from '../types/message.ts';
 
 const router = Router({ mergeParams: true });
 
-router.param('messageid', async (req: any, _res: Response, next, messageid: string) => {
-  req.message = await prisma.message.findUnique({
-    where: {
-      message_id: messageid
-    }
-  })
-
-  next();
-});
-
-router.get('/', channelMiddleware, quickcache.cacheFor(60 * 5, true), async (req: any, res: Response) => {
+router.get('/', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const channel = req.channel;
+    const channel = req.channel!!;
     const pinned_messages = await prisma.message.findMany({
       where: {
         pinned: true,
@@ -43,14 +33,11 @@ router.get('/', channelMiddleware, quickcache.cacheFor(60 * 5, true), async (req
   }
 });
 
-router.put('/:messageid', channelMiddleware, async (req: any, res: Response) => {
+router.put('/:messageid', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const channel = req.channel;
-    const message = req.message;
-
-    if (!message) {
-      return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-    }
+    const channel = req.channel!!;
+    const message = req.message!!;
+    const guild = req.guild!!;
 
     if (message.pinned) {
       //should we tell them?
@@ -60,7 +47,7 @@ router.put('/:messageid', channelMiddleware, async (req: any, res: Response) => 
 
     await prisma.message.update({
       where: {
-        message_id: req.message.id
+        message_id: message.id
       },
       data: {
         pinned: true
@@ -70,27 +57,27 @@ router.put('/:messageid', channelMiddleware, async (req: any, res: Response) => 
     message.pinned = true;
 
     if (channel.type == 1 || channel.type == 3) {
-      await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_UPDATE', message);
-      await dispatcher.dispatchEventInPrivateChannel(channel, 'CHANNEL_PINS_UPDATE', {
+      await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_UPDATE', message);
+      await dispatcher.dispatchEventInPrivateChannel(channel.id, 'CHANNEL_PINS_UPDATE', {
         channel_id: channel.id,
         last_pin_timestamp: new Date().toISOString(),
       });
 
-      const pin_msg = await global.database.createSystemMessage(null, channel.id, 6, [req.account]);
+      const pin_msg = await MessageService.createSystemMessage(null, channel.id, MessageType.PIN, [req.account]);
 
-      await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_CREATE', pin_msg);
+      await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_CREATE', pin_msg);
     } else {
-      await dispatcher.dispatchEventInChannel(req.guild, channel.id, 'MESSAGE_UPDATE', message);
-      await dispatcher.dispatchEventInChannel(req.guild, channel.id, 'CHANNEL_PINS_UPDATE', {
+      await dispatcher.dispatchEventInChannel(guild.id, channel.id, 'MESSAGE_UPDATE', message);
+      await dispatcher.dispatchEventInChannel(guild.id, channel.id, 'CHANNEL_PINS_UPDATE', {
         channel_id: channel.id,
         last_pin_timestamp: new Date().toISOString(),
       });
 
-      const pin_msg = await globalUtils.createSystemMessage(req.guild.id, channel.id, 6, [
+      const pin_msg = await MessageService.createSystemMessage(guild.id, channel.id, MessageType.PIN, [
         req.account
       ]);
 
-      await dispatcher.dispatchEventInChannel(req.guild, channel.id, 'MESSAGE_CREATE', pin_msg);
+      await dispatcher.dispatchEventInChannel(guild.id, channel.id, 'MESSAGE_CREATE', pin_msg);
     }
 
     return res.status(204).send();
@@ -101,14 +88,11 @@ router.put('/:messageid', channelMiddleware, async (req: any, res: Response) => 
   }
 });
 
-router.delete('/:messageid', channelMiddleware, async (req: any, res: Response) => {
+router.delete('/:messageid', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const channel = req.channel;
-    const message = req.message;
-
-    if (!message) {
-      return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-    }
+    const channel = req.channel!!;
+    const message = req.message!!;
+    const guild = req.guild!!;
 
     if (!message.pinned) {
       //should we tell them?
@@ -118,7 +102,7 @@ router.delete('/:messageid', channelMiddleware, async (req: any, res: Response) 
 
     await prisma.message.update({
       where: {
-        message_id: req.message.id
+        message_id: message.id
       },
       data: {
         pinned: false
@@ -128,8 +112,8 @@ router.delete('/:messageid', channelMiddleware, async (req: any, res: Response) 
     message.pinned = false;
 
     if (channel.type == 1 || channel.type == 3)
-      await dispatcher.dispatchEventInPrivateChannel(channel, 'MESSAGE_UPDATE', message);
-    else await dispatcher.dispatchEventInChannel(req.guild, channel.id, 'MESSAGE_UPDATE', message);
+      await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_UPDATE', message);
+    else await dispatcher.dispatchEventInChannel(guild.id, channel.id, 'MESSAGE_UPDATE', message);
 
     return res.status(204).send();
   } catch (error) {
@@ -139,10 +123,10 @@ router.delete('/:messageid', channelMiddleware, async (req: any, res: Response) 
   }
 });
 
-router.post('/ack', channelMiddleware, async (req: any, res: Response) => {
+router.post('/ack', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.account.id;
-    const channelId = req.channel.id;
+    const userId = req.account!!.id;
+    const channelId = req.channel!!.id;
 
     const latestPin = await prisma.message.findFirst({
       where: {

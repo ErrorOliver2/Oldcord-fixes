@@ -1,3 +1,5 @@
+import ctx from "../context.ts";
+
 export interface RecaptchaSiteVerifyResponse {
   success: boolean;
   challenge_ts?: string;
@@ -6,7 +8,7 @@ export interface RecaptchaSiteVerifyResponse {
 }
 
 export async function verify(answer: string): Promise<boolean> {
-  const secret = (global as any).config?.captcha_config?.secret_key;
+  const secret = ctx.config?.captcha_config?.secret_key;
 
   if (!secret || !answer) {
     return false;

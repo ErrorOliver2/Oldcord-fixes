@@ -31,7 +31,7 @@
     "stylelint": "npx stylelint -o \"stylelint.log\" \"**/*.css\"",
     "stylelint:fix": "npx stylelint -o \"stylelint.log\" --fix \"**/*.css\"",
     "type-check": "tsc --noEmit",
-    "postinstall" : "npx prisma generate"
+    "postinstall": "npx prisma generate"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
@@ -61,6 +61,7 @@
     "semantic-sdp": "^3.31.1",
     "speakeasy": "^2.0.0",
     "ws": "^8.19.0",
+    "youtubei.js": "^16.0.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {

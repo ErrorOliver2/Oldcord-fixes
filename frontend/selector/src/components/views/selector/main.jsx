@@ -181,8 +181,8 @@ export default function () {
       <Logo />
       <div className='selector-view'>
         <Card className='selector-card'>
-          <Text variant='body' className='version-three-text'>
-            V3
+          <Text variant='body' className='version-four-text'>
+            V4
           </Text>
           <Text variant='h1'>Oldcord Build Selector</Text>
           <Text variant='h2'>Choose your preferred Discord build below</Text>
@@ -214,11 +214,11 @@ export default function () {
             <Text
               variant='body'
               style={{
-                color: 'gray',
+                color: '#b3b3b3',
                 borderBottom: '0.2px dotted #585757',
                 borderTop: '0.2px dotted #585757',
                 padding: '5px',
-                background: '#33363b',
+                background: 'rgb(32, 33, 35)',
               }}
             >
               While there is only one official instance running with Oldcord, please keep in mind
