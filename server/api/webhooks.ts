@@ -145,7 +145,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
     let embeds = [];
     const MAX_EMBEDS = 10;
 
-    const proxyUrl = (url) => {
+    const proxyUrl = (url: string) => {
       return url ? `/proxy/${encodeURIComponent(url)}` : null;
     };
 

@@ -8,6 +8,7 @@ import { guildMiddleware, rateLimitMiddleware } from '../../../helpers/middlewar
 import type { Request, Response } from "express";
 import { prisma } from '../../../prisma.ts';
 import { cacheForMiddleware } from '../../../helpers/middlewares.ts';
+import ctx from '../../../context.ts';
 
 const router = Router();
 
@@ -15,8 +16,8 @@ router.delete(
   '/:guildid',
   guildMiddleware,
   rateLimitMiddleware(
-    global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.leaveGuild.timeFrame,
+    ctx.config!.ratelimit_config.leaveGuild.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.leaveGuild.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -76,8 +77,8 @@ router.patch(
   '/:guildid/settings',
   guildMiddleware,
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateUsersGuildSettings.maxPerTimeFrame,
-    global.config.ratelimit_config.updateUsersGuildSettings.timeFrame,
+    ctx.config!.ratelimit_config.updateUsersGuildSettings.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateUsersGuildSettings.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -108,7 +109,9 @@ router.patch(
       const fields = ['muted', 'suppress_everyone', 'message_notifications', 'mobile_push'];
 
       fields.forEach(field => {
-        if (req.body[field] !== undefined) guildSettings[field] = req.body[field];
+        if (req.body[field] !== undefined) {
+          guildSettings[field] = req.body[field];
+        }
       });
 
       if (req.body.channel_overrides) {
@@ -147,7 +150,7 @@ router.patch(
 );
 
 router.get('/premium/subscriptions', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
-  if (global.config.infinite_boosts) {
+  if (ctx.config!.instance.flags.includes("INFINITE_BOOSTS")) {
     return res.status(200).json([]);
   }
 

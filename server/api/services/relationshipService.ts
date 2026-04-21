@@ -4,7 +4,7 @@ import globalUtils from "../../helpers/globalutils.ts";
 import { logText } from "../../helpers/logger.ts";
 import type { User } from "../../types/user.ts";
 import { GuildService } from "./guildService.ts";
-import type { Account } from "../../types/account.ts";
+import type { AccountSettings } from "../../types/account.ts";
 import dispatcher from "../../helpers/dispatcher.ts";
 
 export const RelationshipService = {
@@ -31,11 +31,11 @@ export const RelationshipService = {
                 
                 let type = rel.type;
 
-                if (isInitiator && type === 3) {
-                    type = 4;
+                if (isInitiator && type === RelationshipType.INCOMING_FR) {
+                    type = RelationshipType.OUTGOING_FR;
                 }
 
-                if (type === 2 && !isInitiator) {
+                if (type === RelationshipType.BLOCKED && !isInitiator) {
                     continue;
                 }
 
@@ -55,7 +55,7 @@ export const RelationshipService = {
 
     async modifyRelationship(userId: string, targetId: string, type: number): Promise<boolean> {
         try {
-            if (type === 0) {
+            if (type === RelationshipType.NONE) {
                 await prisma.relationship.deleteMany({
                     where: {
                         OR: [
@@ -98,21 +98,42 @@ export const RelationshipService = {
         }
     },
 
-    async handleFriendRequest(account: Account, target: Account) {
-        const rel = account.relationships?.find((r) => r.id === target.id);
-        const targetRel = target.relationships?.find((r) => r.id === account.id);
+    async handleFriendRequest(accountId: string, targetId: string) {
+        const [account, target, existingRel] = await Promise.all([
+            prisma.user.findUnique({
+                where: { id: accountId },
+                select: { id: true, username: true, discriminator: true, avatar: true, settings: true }
+            }),
+            prisma.user.findUnique({
+                where: { id: targetId },
+                select: { id: true, settings: true, username: true, discriminator: true, avatar: true },
+            }),
+            prisma.relationship.findFirst({
+                where: {
+                    OR: [
+                        { user_id_1: accountId, user_id_2: targetId },
+                        { user_id_1: targetId, user_id_2: accountId }
+                    ]
+                }
+            })
+        ]);
 
-        if ((rel && rel.type !== RelationshipType.NONE) || (targetRel && targetRel.type === RelationshipType.BLOCKED)) {
+        if (!account || !target) {
+            throw { status: 404, message: 'User not found' };
+        }
+
+        if (existingRel && existingRel.type !== RelationshipType.NONE) {
             throw { status: 403, message: 'Failed to send friend request' };
         }
 
-        const flags = target.settings?.friend_source_flags;
+        const targetSettings = target.settings as AccountSettings;
+        const flags = targetSettings?.friend_source_flags;
 
         if (flags && !flags.all) {
             let authorized = false;
-            
+        
             if (flags.mutual_guilds) {
-                const mutual = await GuildService.getMutualGuilds(account.id, target.id);
+                const mutual = await GuildService.getMutualGuilds(accountId, targetId);
 
                 if (mutual.length > 0) {
                     authorized = true;
@@ -120,11 +141,20 @@ export const RelationshipService = {
             }
 
             if (!authorized && flags.mutual_friends) {
-                const sharedFriends = account.relationships?.filter((r) => 
-                    r.type === RelationshipType.FRIEND && target.relationships?.some((tr) => tr.id === r.id && tr.type === RelationshipType.FRIEND)
-                );
+                const sharedFriendsCount = await prisma.relationship.count({
+                    where: {
+                        type: RelationshipType.FRIEND,
+                        user_id_1: accountId,
+                        user_id_2: {
+                            in: await prisma.relationship.findMany({
+                                where: { user_id_1: targetId, type: RelationshipType.FRIEND },
+                                select: { user_id_2: true }
+                            }).then(rels => rels.map(r => r.user_id_2))
+                        }
+                    }
+                });
 
-                if (sharedFriends && sharedFriends.length > 0) {
+                if (sharedFriendsCount > 0) {
                     authorized = true;
                 }
             }
@@ -134,14 +164,18 @@ export const RelationshipService = {
             }
         }
 
-        await this.addRelationship(account.id, target.id, RelationshipType.INCOMING_FR);
-        
-        await dispatcher.dispatchEventTo(account.id, 'RELATIONSHIP_ADD', {
-            id: target.id, type: RelationshipType.OUTGOING_FR, user: globalUtils.miniUserObject(target)
-        });
+        await this.addRelationship(accountId, targetId, RelationshipType.INCOMING_FR);
 
-        await dispatcher.dispatchEventTo(target.id, 'RELATIONSHIP_ADD', {
-            id: account.id, type: RelationshipType.INCOMING_FR, user: globalUtils.miniUserObject(account)
-        });
+        const miniAccount = globalUtils.miniUserObject(account as any);
+        const miniTarget = globalUtils.miniUserObject(target as any);
+
+        await Promise.all([
+            dispatcher.dispatchEventTo(accountId, 'RELATIONSHIP_ADD', {
+                id: target.id, type: RelationshipType.OUTGOING_FR, user: miniTarget
+            }),
+            dispatcher.dispatchEventTo(targetId, 'RELATIONSHIP_ADD', {
+                id: account.id, type: RelationshipType.INCOMING_FR, user: miniAccount
+            })
+        ]);
     }
 };

@@ -5,26 +5,27 @@ import { cacheForMiddleware, rateLimitMiddleware } from '../helpers/middlewares.
 const router = Router({ mergeParams: true });
 import { response_500 } from '../helpers/errors.ts';
 import type { Request, Response } from "express";
+import ctx from '../context.ts';
 
 router.get(
   '/tenor/search',
   rateLimitMiddleware(
-    global.config.ratelimit_config.tenorSearch.maxPerTimeFrame,
-    global.config.ratelimit_config.tenorSearch.timeFrame,
+    ctx.config!.ratelimit_config.tenorSearch.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.tenorSearch.timeFrame,
   ),
   cacheForMiddleware(60 * 30, "public", true),
   async (req: Request, res: Response) => {
     try {
       const query = req.query.q;
 
-      if (!query || !global.config.tenor_api_key) {
+      if (!query || !ctx.config!.tenor_api_key) {
         return res.json([]);
       }
 
       const baseUrl = 'https://tenor.googleapis.com/v2/search';
       const params = new URLSearchParams({
         q: query,
-        key: global.config.tenor_api_key,
+        key: ctx.config!.tenor_api_key,
         limit: 50,
         media_filter: 'tinygif',
       } as any).toString();

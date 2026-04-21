@@ -9,6 +9,7 @@ import me from './me/index.js';
 import type { Request, Response } from "express";
 import { prisma } from '../../prisma.ts';
 import type { User } from '../../types/user.ts';
+import ctx from '../../context.ts';
 
 const router = Router();
 
@@ -22,8 +23,8 @@ router.get('/:userid', userMiddleware, cacheForMiddleware(60 * 5, "private", fal
 router.post(
   '/:userid/channels',
   rateLimitMiddleware(
-    global.config.ratelimit_config.createPrivateChannel.maxPerTimeFrame,
-    global.config.ratelimit_config.createPrivateChannel.timeFrame,
+    ctx.config!.ratelimit_config.createPrivateChannel.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.createPrivateChannel.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -52,7 +53,7 @@ router.post(
 
       let validRecipientIDs: string[] = [];
       
-      const map = {};
+      const map = {} as Record<string, User>;
 
       validRecipientIDs.push(account.id);
 
@@ -77,7 +78,7 @@ router.post(
 
         if (!userObject) continue;
 
-        map[recipient] = userObject;
+        map[recipient] = userObject as User;
 
         validRecipientIDs.push(recipient);
       }
@@ -117,7 +118,7 @@ router.post(
 
           const userObject = map[validRecipientId];
 
-          if (!globalUtils.areWeFriends(account, userObject)) {
+          if (!globalUtils.areWeFriends(account.id, userObject.id)) {
             validRecipientIDs = validRecipientIDs.filter((x) => x !== validRecipientId);
             continue;
           }
@@ -149,7 +150,7 @@ router.post(
   },
 );
 
-router.get('/:userid/profile', userMiddleware, async (req: Request, res: Response) => {
+router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account!!;
     const user = req.user!!;
@@ -253,7 +254,7 @@ router.get('/:userid/profile', userMiddleware, async (req: Request, res: Respons
 
 //Never share this cache because it's mutuals and whatnot, different for each requester
 //We're gonna remove the userMiddleware from this since it needs to work on users we're friends with without any guilds in common
-router.get('/:userid/relationships', async (req: Request, res: Response) => {
+router.get('/:userid/relationships', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account!!;
 

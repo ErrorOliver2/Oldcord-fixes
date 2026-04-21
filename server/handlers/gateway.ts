@@ -179,7 +179,7 @@ async function handleVoiceState(socket: WebSocket, packet: GatewayVoiceStatePack
 
     if (channel.user_limit > 0 && user_id) {
       const testRoom = ctx.rooms.filter((x) => x.room_id === `${guild_id}:${channel_id}`);
-      const permissionCheck = permissions.hasChannelPermissionTo(
+      const permissionCheck = await permissions.hasChannelPermissionTo(
         session.channel_id,
         current_guild,
         user_id,

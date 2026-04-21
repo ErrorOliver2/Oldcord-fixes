@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { logText } from '../helpers/logger.ts';
 import { response_500 } from '../helpers/errors.ts';
 import { cacheForMiddleware } from '../helpers/middlewares.ts';
+import ctx from '../context.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -27,19 +28,19 @@ interface KlipyCategory {
   image: string;
 }
 
-router.get('/trending', cacheForMiddleware(60 * 5, "public", true), async (_req: Request, res: Response) => {
+router.get('/trending', cacheForMiddleware(60 * 5, "private", true), async (_req: Request, res: Response) => {
   try {
-    if (!global.config.klipy_api_key) {
+    if (!ctx.config!.klipy_api_key) {
       return res.status(200).json({ categories: [], gifs: [] });
     }
 
     const catRes = await fetch(
-      `https://api.klipy.com/v2/categories?key=${global.config.klipy_api_key}&type=featured`,
+      `https://api.klipy.com/v2/categories?key=${ctx.config!.klipy_api_key}&type=featured`,
     );
     const catData = await catRes.json() as { tags: KlipyCategory[] };
 
     const trendRes = await fetch(
-      `https://api.klipy.com/v2/featured?key=${global.config.klipy_api_key}&limit=10&media_filter=tinygif`,
+      `https://api.klipy.com/v2/featured?key=${ctx.config!.klipy_api_key}&limit=10&media_filter=tinygif`,
     );
     const trendData = await trendRes.json() as { results: KlipyResult[] };
 
@@ -68,14 +69,14 @@ router.get('/trending', cacheForMiddleware(60 * 5, "public", true), async (_req:
   }
 });
 
-router.get('/trending-gifs', cacheForMiddleware(60 * 5, "public", true), async (_req: Request, res: Response) => {
+router.get('/trending-gifs', cacheForMiddleware(60 * 5, "private", true), async (_req: Request, res: Response) => {
   try {
-     if (!global.config.klipy_api_key) {
+     if (!ctx.config!.klipy_api_key) {
       return res.status(200).json([]);
     }
 
     const response = await fetch(
-      `https://api.klipy.com/v2/featured?key=${global.config.klipy_api_key}&limit=50&media_filter=tinymp4,gif`,
+      `https://api.klipy.com/v2/featured?key=${ctx.config!.klipy_api_key}&limit=50&media_filter=tinymp4,gif`,
     );
     const data = await response.json() as { results: KlipyResult[] };
 
@@ -100,9 +101,9 @@ router.get('/trending-gifs', cacheForMiddleware(60 * 5, "public", true), async (
   }
 });
 
-router.get('/search', cacheForMiddleware(60 * 5, "public", true), async (req: Request, res: Response) => {
+router.get('/search', cacheForMiddleware(60 * 5, "private", true), async (req: Request, res: Response) => {
   try {
-    if (!global.config.klipy_api_key) {
+    if (!ctx.config!.klipy_api_key) {
       return res.status(200).json([]);
     }
 
@@ -113,7 +114,7 @@ router.get('/search', cacheForMiddleware(60 * 5, "public", true), async (req: Re
 
     const params = new URLSearchParams({
       q: query,
-      key: global.config.klipy_api_key,
+      key: ctx.config!.klipy_api_key,
       limit: limit.toString(),
       media_filter: mediaFilter,
       contentfilter: 'medium',

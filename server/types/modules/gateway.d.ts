@@ -21,6 +21,7 @@ declare module 'ws' {
       timeout: any;
       acknowledge: (data: any) => void;
     };
+    client_build_date?: Date;
     client_build?: string;
     wantsEtf?: boolean;
     cookieStore?: Record<string, string>;

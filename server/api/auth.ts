@@ -9,15 +9,14 @@ import { totp } from 'speakeasy';
 import { prisma } from '../prisma.ts';
 import { AuthService } from './services/authService.ts';
 import type { Request, Response } from "express";
-
-global.config = globalUtils.config;
+import ctx from '../context.ts';
 
 router.post(
   '/register',
   instanceMiddleware('NO_REGISTRATION'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -48,12 +47,12 @@ router.post(
         const emailAddr = req.body.email.split('@')[0];
 
         if (
-          emailAddr.length < global.config.limits['email'].min ||
-          emailAddr.length >= global.config.limits['email'].max
+          emailAddr.length < ctx.config!.limits['email'].min ||
+          emailAddr.length >= ctx.config!.limits['email'].max
         ) {
           return res.status(400).json({
             code: 400,
-            email: `Must be between ${global.config.limits['email'].min} and ${global.config.limits['email'].max} characters.`,
+            email: `Must be between ${ctx.config!.limits['email'].min} and ${ctx.config!.limits['email'].max} characters.`,
           });
         }
 
@@ -78,12 +77,12 @@ router.post(
         } else {
           if (
             release_date != 'june_12_2015' &&
-            (req.body.password.length < global.config.limits['password'].min ||
-              req.body.password.length >= global.config.limits['password'].max)
+            (req.body.password.length < ctx.config!.limits['password'].min ||
+              req.body.password.length >= ctx.config!.limits['password'].max)
           ) {
             return res.status(400).json({
               code: 400,
-              password: `Must be between ${global.config.limits['password'].min} and ${global.config.limits['password'].max} characters.`,
+              password: `Must be between ${ctx.config!.limits['password'].min} and ${ctx.config!.limits['password'].max} characters.`,
             });
           }
         }
@@ -97,12 +96,12 @@ router.post(
       }
 
       if (
-        req.body.username.length < global.config.limits['username'].min ||
-        req.body.username.length >= global.config.limits['username'].max
+        req.body.username.length < ctx.config!.limits['username'].min ||
+        req.body.username.length >= ctx.config!.limits['username'].max
       ) {
         return res.status(400).json({
           code: 400,
-          username: `Must be between ${global.config.limits['username'].min} and ${global.config.limits['username'].max} characters.`,
+          username: `Must be between ${ctx.config!.limits['username'].min} and ${ctx.config!.limits['username'].max} characters.`,
         });
       }
 
@@ -115,7 +114,7 @@ router.post(
       //Before July 2016 Discord had no support for Recaptcha.
       //We get around this by redirecting clients on 2015/2016 who wish to make an account to a working 2018 client then back to their original clients after they make their account/whatever.
 
-      if (global.config.captcha_config.enabled) {
+      if (ctx.config!.captcha_config.enabled) {
         if (req.body.captcha_key === undefined || req.body.captcha_key === null) {
           return res.status(400).json({
             captcha_key: 'Captcha is required.',
@@ -151,8 +150,8 @@ router.post(
 router.post(
   '/login',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -199,8 +198,8 @@ router.post(
 router.post(
   '/mfa/totp',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -257,8 +256,8 @@ router.post(
 router.post(
   '/logout',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (_req: Request, res: Response) => {
     return res.status(204).send();
@@ -268,8 +267,8 @@ router.post(
 router.post(
   '/forgot',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -323,8 +322,8 @@ router.post('/fingerprint', (_req: Request, res: Response) => {
 router.post(
   '/verify',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -353,7 +352,7 @@ router.post(
         });
       }
 
-      if (global.config.captcha_config.enabled) {
+      if (ctx.config!.captcha_config.enabled) {
         if (req.body.captcha_key === undefined || req.body.captcha_key === null) {
           return res.status(400).json({
             captcha_key: 'Captcha is required.',
@@ -400,8 +399,8 @@ router.post(
 router.post(
   '/verify/resend',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -425,7 +424,7 @@ router.post(
         return res.status(204).send();
       }
 
-      if (!global.config.email_config.enabled) {
+      if (!ctx.config!.email_config.enabled) {
         return res.status(204).send();
       }
 
@@ -437,8 +436,8 @@ router.post(
         newEmailToken = true;
       }
 
-      const trySendRegEmail = await global.emailer.sendRegistrationEmail(
-        account.email,
+      const trySendRegEmail = await ctx.emailer?.sendRegistrationEmail(
+        account.email!!,
         emailToken,
         account,
       );

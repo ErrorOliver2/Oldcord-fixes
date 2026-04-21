@@ -6,7 +6,8 @@ import { generate } from '../../helpers/snowflake.ts';
 import { GuildService } from './guildService.ts';
 import { logText } from '../../helpers/logger.ts';
 import type { User } from '../../types/user.ts';
-import type { Bot } from '../../types/bot.ts';
+import permissions from '../../helpers/permissions.ts';
+import { PUBLIC_USER_SELECT } from './accountService.ts';
 
 export const OAuthService = {
     async createApplication(ownerId: string, name: string) {
@@ -59,7 +60,7 @@ export const OAuthService = {
         });
     },
 
-    async getOAuthDetails(clientId: string, scope: string, account: any, isStaff: boolean, staffPrivilege: number) {
+    async getOAuthDetails(clientId: string, scope: string, account_id: string, isStaff: boolean, staffPrivilege: number) {
         const dbApplication = await prisma.application.findUnique({
             where: { id: clientId },
             include: { bot: true }
@@ -81,7 +82,7 @@ export const OAuthService = {
 
             if (!bot) throw { status: 404, error: errors.response_404.UNKNOWN_APPLICATION };
 
-            if (!bot.public && dbApplication.owner_id !== account.id) {
+            if (!bot.public && dbApplication.owner_id !== account_id) {
                 throw { status: 404, error: errors.response_404.UNKNOWN_APPLICATION };
             }
 
@@ -92,20 +93,27 @@ export const OAuthService = {
             application.bot_require_code_grant = require_code_grant;
         }
 
+        const account = await prisma.user.findUnique({
+            where: {
+                id: account_id
+            },
+            select: PUBLIC_USER_SELECT
+        });
+
         const guilds = await prisma.guild.findMany({
             where: {
-                members: { some: { user_id: account.id } }
+                members: { some: { user_id: account_id } }
             },
             include: {
-                members: { where: { user_id: account.id } }
+                members: { where: { user_id: account_id } }
             }
         });
 
         const authorizedGuilds = guilds.filter(guild => {
-            const isOwner = guild.owner_id === account.id;
+            const isOwner = guild.owner_id === account_id;
             const isStaffOverride = isStaff && staffPrivilege >= 3;
             
-            return isOwner || isStaffOverride || permissions.hasGuildPermissionTo(guild, account.id, 'ADMINISTRATOR', null) || permissions.hasGuildPermissionTo(guild, account.id, 'MANAGE_GUILD', null);
+            return isOwner || isStaffOverride || permissions.hasGuildPermissionTo(guild.id, account_id, 'ADMINISTRATOR', null) || permissions.hasGuildPermissionTo(guild.id, account_id, 'MANAGE_GUILD', null);
         }).map(guild => ({
             id: guild.id,
             icon: guild.icon,
@@ -118,7 +126,7 @@ export const OAuthService = {
             authorized: false,
             application,
             bot: application.bot || null,
-            user: globalUtils.miniUserObject(account),
+            user: account,
             guilds: authorizedGuilds,
             redirect_uri: null
         };
@@ -162,19 +170,13 @@ export const OAuthService = {
             throw { status: 403, error: errors.response_403.MISSING_PERMISSIONS };
         }
 
-        const hasPermission = guild.owner_id === userId || permissions.hasGuildPermissionTo(guild, userId, 'MANAGE_GUILD', null);
+        const hasPermission = guild.owner_id === userId || permissions.hasGuildPermissionTo(guildId, userId, 'MANAGE_GUILD', null);
 
         if (!hasPermission) {
             throw { status: 403, error: errors.response_403.MISSING_PERMISSIONS };
         } //redundant checks but remove later
 
-        await GuildService.addMember({
-            id: application.bot.id,
-            username: application.bot.username,
-            avatar: application.bot.avatar,
-            discriminator: application.bot.discriminator,
-            bot: true
-        } as Bot, guild.id);
+        await GuildService.addMember(application.bot.id, guild.id);
 
         return { success: true };
     },

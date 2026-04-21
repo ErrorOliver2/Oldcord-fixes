@@ -255,7 +255,7 @@ const lazyRequest = {
 
           let ops: any = [];
 
-          if (global.config.sync_only) {
+          if (ctx.config!.sync_only) {
             ops = subData.ranges.map((range) => {
               return {
                 op: 'SYNC',

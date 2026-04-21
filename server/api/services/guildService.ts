@@ -7,14 +7,14 @@ import { logText } from "../../helpers/logger.ts";
 import { MessageService } from "./messageService.ts";
 import { UploadService } from "./uploadService.ts";
 import { deconstruct, generate } from "../../helpers/snowflake.ts";
-import { AccountService } from "./accountService.ts";
+import { AccountService, PUBLIC_USER_SELECT } from "./accountService.ts";
 import type { User } from "../../types/user.ts";
 import type { Invite } from "../../types/invite.ts";
-import type { Bot } from "../../types/bot.ts";
 import { MessageType } from "../../types/message.ts";
 import type { Role } from "../../types/role.ts";
 import { ChannelType } from "../../types/channel.ts";
 import { ChannelService } from "./channelService.ts";
+import type WebSocket from 'ws';
 
 export const GuildService = {
     _formatResponse(guild: any): Guild {
@@ -115,7 +115,7 @@ export const GuildService = {
             return false;
         }
     },
-    async addMember(user: User | Bot, guild_id: string) {
+    async addMember(user_id: string, guild_id: string) {
         const guild = await prisma.guild.findUnique({
             where: { id: guild_id },
             select: {
@@ -128,26 +128,33 @@ export const GuildService = {
         if (!guild) {
             throw { status: 404, error: errors.response_404.UNKNOWN_GUILD };
         }
+
+        const basicUser = await prisma.user.findUnique({
+            where: {
+                id: user_id
+            },
+            select: PUBLIC_USER_SELECT
+        });
     
-        const check = await this.canJoin(user.id, guild_id);
+        const check = await this.canJoin(user_id, guild_id);
 
         if (!check.canJoin) throw { status: 404, error: errors.response_404.UNKNOWN_GUILD };
 
         const joinedAt = new Date().toISOString();
         await prisma.member.create({
             data: {
-                user_id: user.id,
+                user_id: user_id,
                 guild_id: guild_id,
                 joined_at: joinedAt
             }
         });
 
         const fullGuildData = await this.getById(guild_id); 
-        await dispatcher.dispatchEventTo(user.id, 'GUILD_CREATE', fullGuildData);
 
+        await dispatcher.dispatchEventTo(user_id, 'GUILD_CREATE', fullGuildData);
         await dispatcher.dispatchEventInGuild(guild_id, 'GUILD_MEMBER_ADD', {
             roles: [],
-            user: globalUtils.miniUserObject(user),
+            user: globalUtils.miniUserObject(basicUser as User),
             guild_id: guild_id,
             joined_at: joinedAt,
             deaf: false,
@@ -157,7 +164,7 @@ export const GuildService = {
 
         await dispatcher.dispatchEventInGuild(guild.id, 'PRESENCE_UPDATE', {
             ...globalUtils.getUserPresence({
-                user: globalUtils.miniUserObject(user),
+                user: globalUtils.miniUserObject(basicUser as User),
             }),
             roles: [],
             guild_id: guild.id,
@@ -168,14 +175,14 @@ export const GuildService = {
                 guild.id,
                 guild.system_channel_id,
                 MessageType.GUILD_MEMBER_JOIN,
-                [user],
+                [basicUser as User],
             );
 
             await dispatcher.dispatchEventInChannel(
                 guild_id,
                 guild.system_channel_id,
                 'MESSAGE_CREATE',
-                function (socket) {
+                function (socket: WebSocket) {
                     return globalUtils.personalizeMessageObject(
                         join_msg,
                         guild,
@@ -566,6 +573,7 @@ export const GuildService = {
                     last_message_id: c.type === 0 ? '0' : undefined
                 })),
                 members: [{
+                    id: owner.id,
                     user: globalUtils.miniUserObject(owner),
                     nick: null,
                     roles: [],

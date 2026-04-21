@@ -4,16 +4,17 @@ import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { instanceMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, instanceMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
 import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import { MessageService } from './services/messageService.ts';
-import { PublicService } from './services/publicService.ts';
+import permissions from '../helpers/permissions.ts';
+import ctx from '../context.ts';
 
 const router = Router({ mergeParams: true });
 
 //We wont cache stuff like this for everyone because if theyre banned we want the invite to be invalid only for them.
-router.get('/:code', async (req: Request, res: Response) => {
+router.get('/:code', cacheForMiddleware(60 * 30, "private", false), async (req: Request, res: Response) => {
   try {
     const invite = req.invite;
 
@@ -32,8 +33,8 @@ router.get('/:code', async (req: Request, res: Response) => {
 router.delete(
   '/:code',
   rateLimitMiddleware(
-    global.config.ratelimit_config.deleteInvite.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteInvite.timeFrame,
+    ctx.config!.ratelimit_config.deleteInvite.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.deleteInvite.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -46,7 +47,7 @@ router.delete(
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const hasPermission = permissions.hasChannelPermissionTo(
+      const hasPermission = await permissions.hasChannelPermissionTo(
         channel,
         guild,
         sender.id,
@@ -76,8 +77,8 @@ router.post(
   '/:code',
   instanceMiddleware('NO_INVITE_USE'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.useInvite.maxPerTimeFrame,
-    global.config.ratelimit_config.useInvite.timeFrame,
+    ctx.config!.ratelimit_config.useInvite.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.useInvite.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -101,10 +102,10 @@ router.post(
         }
       });
 
-      if (usersGuild >= global.config.limits['guilds_per_account'].max) {
+      if (usersGuild >= ctx.config!.limits['guilds_per_account'].max) {
         return res.status(404).json({
           code: 404,
-          message: `Maximum number of guilds exceeded for this instance (${global.config.limits['guilds_per_account'].max})`,
+          message: `Maximum number of guilds exceeded for this instance (${ctx.config!.limits['guilds_per_account'].max})`,
         });
       }
 

@@ -3,15 +3,16 @@ import { Router } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
-import { channelMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, channelMiddleware } from '../helpers/middlewares.ts';
 import type { Response, Request } from "express";
 import { prisma } from '../prisma.ts';
 import { MessageService } from './services/messageService.ts';
 import { MessageType } from '../types/message.ts';
+import { ChannelType } from '../types/channel.ts';
 
 const router = Router({ mergeParams: true });
 
-router.get('/', channelMiddleware, async (req: Request, res: Response) => {
+router.get('/', channelMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const channel = req.channel!!;
     const pinned_messages = await prisma.message.findMany({
@@ -56,7 +57,7 @@ router.put('/:messageid', channelMiddleware, async (req: Request, res: Response)
 
     message.pinned = true;
 
-    if (channel.type == 1 || channel.type == 3) {
+    if (channel.type == ChannelType.DM || channel.type == ChannelType.GROUPDM) {
       await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_UPDATE', message);
       await dispatcher.dispatchEventInPrivateChannel(channel.id, 'CHANNEL_PINS_UPDATE', {
         channel_id: channel.id,
@@ -111,7 +112,7 @@ router.delete('/:messageid', channelMiddleware, async (req: Request, res: Respon
 
     message.pinned = false;
 
-    if (channel.type == 1 || channel.type == 3)
+    if (channel.type == ChannelType.DM || channel.type == ChannelType.GROUPDM)
       await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_UPDATE', message);
     else await dispatcher.dispatchEventInChannel(guild.id, channel.id, 'MESSAGE_UPDATE', message);
 

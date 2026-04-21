@@ -40,7 +40,7 @@ const permissions = {
       return false;
     }
   },
-  async hasGuildPermissionTo(guild_id: string, user_id: string, key: string, _for_build: string): Promise<boolean> {
+  async hasGuildPermissionTo(guild_id: string, user_id: string, key: string, _for_build: string | null): Promise<boolean> {
     try {
       const guild = await prisma.guild.findUnique({
         where: { id: guild_id },

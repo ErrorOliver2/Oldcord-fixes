@@ -9,10 +9,12 @@ import { prisma } from '../prisma.ts';
 import { AccountService } from '../api/services/accountService.ts';
 import type { Account } from '../types/account.ts';
 import { GuildService } from '../api/services/guildService.ts';
+import ctx from '../context.ts';
+import permissions from './permissions.ts';
 
 const config = globalUtils.config;
 const spacebarApis = ['/.well-known/spacebar', '/policies/instance/domains'];
-const cached404s = {};
+const cached404s = {} as Record<string, number>;
 
 /**
  * Returns a cors middleware for the route, this handles roughly whether other websites can make requests to our API on your behalf.
@@ -76,16 +78,16 @@ async function clientMiddleware(req: Request, res: Response, next: NextFunction)
     const reqHost = (req.headers.origin || req.headers.host || '').replace(/^(https?:\/\/)?/, '');
 
     const isInstanceLocal =
-      global.full_url.includes('localhost') || global.full_url.includes('127.0.0.1');
+      ctx.full_url.includes('localhost') || ctx.full_url.includes('127.0.0.1');
     const isReqLocal = reqHost.includes('localhost') || reqHost.includes('127.0.0.1');
 
     const isBrowser = /Mozilla|Chrome|Safari|Firefox|Edge/i.test(req.headers['user-agent'] as string);
     let isSameHost = false;
 
-    if (global.full_url === reqHost) {
+    if (ctx.full_url === reqHost) {
       isSameHost = true;
     } else if (isInstanceLocal && isReqLocal) {
-      const normalizedInstance = global.full_url.replace('localhost', '127.0.0.1');
+      const normalizedInstance = ctx.full_url.replace('localhost', '127.0.0.1');
       const normalizedReq = reqHost.replace('localhost', '127.0.0.1');
 
       isSameHost = normalizedInstance === normalizedReq;
@@ -295,7 +297,7 @@ function staffAccessMiddleware(privilege_needed: number) {
         return res.status(401).json(errors.response_401.UNAUTHORIZED);
       }
 
-      if (!account.mfa_enabled && global.config.mfa_required_for_admin) {
+      if (!account.mfa_enabled && ctx.config?.mfa_required_for_admin) {
         if (req.method === 'GET' && req.url.endsWith('/@me')) {
           return next();
         } //Exclude from the admin info get request
@@ -459,7 +461,9 @@ async function userMiddleware(req: Request, res: Response, next: NextFunction) {
     return res.status(404).json(errors.response_404.UNKNOWN_USER);
   }
 
-  if (globalUtils.areWeFriends(account, user)) {
+  const friends = await globalUtils.areWeFriends(account.id, user.id);
+
+  if (friends) {
     return next();
   }
 
@@ -485,7 +489,7 @@ async function userMiddleware(req: Request, res: Response, next: NextFunction) {
       guild &&
       guild.members &&
       guild.members.length > 0 &&
-      guild.members.some((member: any) => member.id === account.id),
+      guild.members.some((member) => member.user_id === account.id),
   );
 
   if (!share) {
@@ -539,7 +543,7 @@ async function channelMiddleware(req: Request, res: Response, next: NextFunction
   }
 
   const gCheck = permissions.hasGuildPermissionTo(
-    req.guild,
+    req.guild.id,
     member.id,
     'READ_MESSAGES',
     req.client_build,
@@ -549,9 +553,9 @@ async function channelMiddleware(req: Request, res: Response, next: NextFunction
     return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
   }
 
-  const pCheck = permissions.hasChannelPermissionTo(
-    req.channel,
-    req.guild,
+  const pCheck = await permissions.hasChannelPermissionTo(
+    req.channel!.id,
+    req.guild.id,
     member.id,
     'READ_MESSAGES',
   );
@@ -583,15 +587,15 @@ function guildPermissionsMiddleware(permission: string) {
     }
 
     if (guild.owner_id == sender.id || (req.is_staff && req.staff_details && req.staff_details.privilege >= 3)) {
-      if (!sender.mfa_enabled && global.config.mfa_required_for_admin && req.is_staff) {
-        return res.status(403).json(errors.response_403.MFA_REQUIRED); //move this to its own error code
+      if (!sender.mfa_enabled && ctx.config?.mfa_required_for_admin && req.is_staff) {
+        return res.status(403).json(errors.response_403.MFA_REQUIRED);
       }
 
       return next();
     }
 
     const check = await permissions.hasGuildPermissionTo(
-      req.guild,
+      req.guild!.id,
       sender.id,
       permission,
       req.client_build,
@@ -639,7 +643,7 @@ function channelPermissionsMiddleware(permission: string) {
       }
 
       if (req.is_staff && req.staff_details && req.staff_details.privilege >= 3) {
-        if (!sender.mfa_enabled && global.config.mfa_required_for_admin) {
+        if (!sender.mfa_enabled && ctx.config?.mfa_required_for_admin) {
           return res.status(403).json(errors.response_403.MFA_REQUIRED);
         }
 
@@ -658,7 +662,7 @@ function channelPermissionsMiddleware(permission: string) {
     }
 
     if (req.is_staff && req.staff_details && req.staff_details.privilege >= 3) {
-      if (!sender.mfa_enabled && global.config.mfa_required_for_admin) {
+      if (!sender.mfa_enabled && ctx.config?.mfa_required_for_admin) {
         return res.status(403).json(errors.response_403.MFA_REQUIRED);
       }
 
@@ -688,7 +692,7 @@ function channelPermissionsMiddleware(permission: string) {
             return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
           }
 
-          const friends = !sender.bot && !other.bot && globalUtils.areWeFriends(sender, other);
+          const friends = !sender.bot && !other.bot && globalUtils.areWeFriends(sender.id, other.id);
 
           const guilds = await prisma.guild.findMany({
             where: {
@@ -718,7 +722,7 @@ function channelPermissionsMiddleware(permission: string) {
               return senderAllows && recipientAllows;
             });
 
-            if (!hasAllowedGuild || global.config.require_friendship_for_dm) {
+            if (!hasAllowedGuild || ctx.config?.require_friendship_for_dm) {
               return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
             }
           }
@@ -733,7 +737,7 @@ function channelPermissionsMiddleware(permission: string) {
       return next();
     }
 
-    const check = permissions.hasChannelPermissionTo(
+    const check = await permissions.hasChannelPermissionTo(
       channel,
       req.guild,
       sender.id,

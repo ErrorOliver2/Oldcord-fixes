@@ -15,6 +15,7 @@ import type { User } from '../types/user.ts';
 import type { Account } from '../types/account.ts';
 import { ChannelType, type Channel } from '../types/channel.ts';
 import type { Bot } from '../types/bot.ts';
+import ctx from '../context.ts';
 
 const configPath = './config.json';
 
@@ -270,7 +271,7 @@ const globalUtils = {
       : _config.signaling_server_url;
   },
   unavailableGuildsStore: [] as any[],
-  generateString: (length): string => {
+  generateString: (length: number): string => {
     let result = '';
     const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     const charactersLength = characters.length;
@@ -284,7 +285,7 @@ const globalUtils = {
   },
   getUserPresence: (member: any): any => {
     const userId = String(member.id || member.user_id);
-    const uSessions = global.userSessions.get(userId);
+    const uSessions = ctx.userSessions.get(userId);
     const activeSessions = uSessions
       ? Array.from(uSessions).filter((s: any) => !s.dead && s.presence)
       : [];
@@ -336,23 +337,6 @@ const globalUtils = {
     }
 
     return presences;
-  },
-  getGuildOnlineUserIds: (guild_id: string): any => {
-    const user_ids = new Set();
-
-    for (const [userId, sessions] of global.userSessions) {
-      const isOnlineAndVisible = sessions.some((s) => {
-        return !s.dead && s.presence?.status !== 'offline' && s.presence?.status !== 'invisible';
-      });
-
-      if (isOnlineAndVisible) {
-        if (sessions[0].guilds?.some((g) => g.id === guild_id)) {
-          user_ids.add(userId);
-        }
-      }
-    }
-
-    return Array.from(user_ids);
   },
   generateMemorableInviteCode: (): string => {
     const words = [
@@ -430,7 +414,7 @@ const globalUtils = {
       'NO_GUILD_CREATION': 'Creating guilds is currenly not allowed on this instance.',
       'NO_INVITE_USE': 'You are not allowed to accept this invite.',
       'NO_INVITE_CREATION': 'Creating invites is not allowed on this instance.'
-    };
+    } as Record<string, string>;
 
     return kvp[flag] ?? 'This is not a valid flag. Try another.';
   },
@@ -632,46 +616,6 @@ const globalUtils = {
 
     return ret;
   },
-  sanitizeObject: (object: any, toSanitize: any = []): any => {
-    const sanitizedObject = { ...object };
-
-    if (toSanitize.length > 0) {
-      toSanitize.forEach((property) => {
-        delete sanitizedObject[property];
-      });
-    }
-
-    return sanitizedObject;
-  },
-  buildGuildObject: (guild: any, req: Request): any => {
-    if (!guild) return null;
-
-    if (!req.account) return null;
-
-    if (
-      guild.region != 'everything' &&
-      req.client_build_date &&
-      req.client_build_date.getFullYear() != parseInt(guild.region)
-    ) {
-      const sessions = global.userSessions.get(req.account.id);
-
-      if (!sessions) return guild; //fallback ig
-
-      const session = sessions.find(
-        (x) => x.socket != null && x.socket.client_build === req.client_build,
-      );
-
-      if (!session) return guild;
-
-      const proper_guild = session.guilds.find((x) => x.id === guild.id);
-
-      if (!session.guilds || !proper_guild) return guild; //man wtf
-
-      return proper_guild;
-    }
-
-    return guild;
-  },
   checkUsername: (username: string): any => {
     const allowed = /^[A-Za-z0-9А-Яа-яЁё\s.]+$/;
 
@@ -842,7 +786,7 @@ const globalUtils = {
 
     return user;
   },
-  areWeFriends: (user1: any, user2: any): boolean => {
+  areWeFriends: (user1_id: string, user2_id: string): Promise<boolean> => {
     if (user1.bot || user2.bot) {
       return false;
     }
@@ -1291,7 +1235,6 @@ export const {
   generateString,
   getUserPresence,
   getGuildPresences,
-  getGuildOnlineUserIds,
   generateMemorableInviteCode,
   addClientCapabilities,
   flagToReason,
@@ -1303,8 +1246,6 @@ export const {
   replaceAll,
   SerializeOverwriteToString,
   SerializeOverwritesToString,
-  sanitizeObject,
-  buildGuildObject,
   checkUsername,
   badEmail,
   validSuperPropertiesObject,

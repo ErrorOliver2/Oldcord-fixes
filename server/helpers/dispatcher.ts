@@ -1,10 +1,11 @@
 import { prisma } from '../prisma.ts';
 import { handleMembersSync } from './lazyRequest.js';
 import { logText } from './logger.ts';
+import permissions from './permissions.ts';
 
 const dispatcher = {
   dispatchEventTo: (user_id: string, type: string, payload: any): boolean => {
-    const sessions = global.userSessions.get(user_id);
+    const sessions = ctx.userSessions.get(user_id);
 
     if (!sessions || sessions.size === 0) return false;
 
@@ -15,7 +16,7 @@ const dispatcher = {
     return true;
   },
   dispatchLogoutTo: (user_id: string): boolean => {
-    const sessions = global.userSessions.get(user_id);
+    const sessions = ctx.userSessions.get(user_id);
 
     if (!sessions || sessions.size === 0) return false;
 
@@ -27,14 +28,14 @@ const dispatcher = {
     return true;
   },
   dispatchEventToEveryoneWhatAreYouDoingWhyWouldYouDoThis: (type: string, payload: any) => {
-    global.userSessions.forEach((sessions: any[]) => {
+    ctx.userSessions.forEach((sessions: any[]) => {
       for (const session of sessions) {
         session.dispatch(type, payload);
       }
     });
   },
   dispatchGuildMemberUpdateToAllTheirGuilds: (user_id: string, new_user: any): boolean => {
-    const sessions = global.userSessions.get(user_id);
+    const sessions = ctx.userSessions.get(user_id);
 
     if (!sessions || sessions.size === 0) return false;
 
@@ -62,12 +63,12 @@ const dispatcher = {
     const channel = channel_id ? guild.channels.find(c => c.id === channel_id) : null;
 
     for (const member of guild.members) {
-      const uSessions = global.userSessions.get(member.user_id);
+      const uSessions = ctx.userSessions.get(member.user_id);
       if (!uSessions) continue;
 
       for (const uSession of uSessions) {
         if (guild.owner_id !== member.user_id) {
-          const guildPermCheck = permissions.hasGuildPermissionTo(
+          const guildPermCheck = await permissions.hasGuildPermissionTo(
             guild,
             member.user_id,
             permission_check,
@@ -76,7 +77,7 @@ const dispatcher = {
           if (!guildPermCheck) continue;
           
           if (channel) {
-            const channelPermCheck = permissions.hasChannelPermissionTo(
+            const channelPermCheck = await permissions.hasChannelPermissionTo(
                 channel,
                 guild,
                 member.user_id,
@@ -107,7 +108,7 @@ const dispatcher = {
 
     if (!guild) return false;
     
-    const activeSessions = Array.from(global.userSessions.values()).flat();
+    const activeSessions = Array.from(ctx.userSessions.values()).flat();
 
     const updatePromises = activeSessions.map(async (session: any) => {
       const guildInSession = session.guilds?.find((g) => g.id === guild.id);
@@ -190,7 +191,7 @@ const dispatcher = {
     if (guildMembers.length === 0) return false;
 
     for (const member of guildMembers) {
-      const uSessions = global.userSessions.get(member.user_id);
+      const uSessions = ctx.userSessions.get(member.user_id);
       if (!uSessions || uSessions.length === 0) continue;
 
       for (const session of uSessions) {
@@ -235,7 +236,7 @@ const dispatcher = {
     if (!channel || !channel.recipients) return false;
 
     for (const recipient of channel.recipients) {
-      const uSessions = global.userSessions.get(recipient.id);
+      const uSessions = ctx.userSessions.get(recipient.id);
       if (!uSessions || uSessions.length === 0) continue;
 
       for (const session of uSessions) {
@@ -266,10 +267,10 @@ const dispatcher = {
     if (channel == null) return false;
 
     for (const member of guild.members) {
-      const uSessions = global.userSessions.get(member.user_id);
+      const uSessions = ctx.userSessions.get(member.user_id);
       if (!uSessions) continue;
 
-      const hasAccess = permissions.hasChannelPermissionTo(channel, guild, member.user_id, 'READ_MESSAGES');
+      const hasAccess = await permissions.hasChannelPermissionTo(channel, guild, member.user_id, 'READ_MESSAGES');
       if (!hasAccess) continue;
 
       for (const session of uSessions) {

@@ -10,6 +10,7 @@ const router = Router({ mergeParams: true });
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { prisma } from '../prisma.ts';
+import ctx from '../context.ts';
 
 //to-do move to use a service
 
@@ -36,10 +37,10 @@ router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), a
     const account = req.account!!;
     const guild = req.guild!!;
 
-    if (guild.emojis!!.length >= global.config.limits['emojis_per_guild'].max) {
+    if (guild.emojis!!.length >= ctx.config!.limits['emojis_per_guild'].max) {
       return res.status(404).json({
         code: 404,
-        message: `Maximum emojis per guild exceeded (${global.config.limits['emojis_per_guild'].max})`,
+        message: `Maximum emojis per guild exceeded (${ctx.config!.limits['emojis_per_guild'].max})`,
       });
     }
 
@@ -51,12 +52,12 @@ router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), a
     }
 
     if (
-      req.body.name.length < global.config.limits['emoji_name'].min ||
-      req.body.name.length >= global.config.limits['emoji_name'].max
+      req.body.name.length < ctx.config!.limits['emoji_name'].min ||
+      req.body.name.length >= ctx.config!.limits['emoji_name'].max
     ) {
       return res.status(400).json({
         code: 400,
-        name: `Must be between ${global.config.limits['emoji_name'].min} and ${global.config.limits['emoji_name'].max} characters.`,
+        name: `Must be between ${ctx.config!.limits['emoji_name'].min} and ${ctx.config!.limits['emoji_name'].max} characters.`,
       });
     }
 
@@ -157,12 +158,12 @@ router.patch(
       }
 
       if (
-        req.body.name.length < global.config.limits['emoji_name'].min ||
-        req.body.name.length >= global.config.limits['emoji_name'].max
+        req.body.name.length < ctx.config!.limits['emoji_name'].min ||
+        req.body.name.length >= ctx.config!.limits['emoji_name'].max
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${global.config.limits['emoji_name'].min} and ${global.config.limits['emoji_name'].max} characters.`,
+          name: `Must be between ${ctx.config!.limits['emoji_name'].min} and ${ctx.config!.limits['emoji_name'].max} characters.`,
         });
       }
 

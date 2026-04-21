@@ -6,11 +6,12 @@ import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import lazyRequest from '../helpers/lazyRequest.js';
 import { logText } from '../helpers/logger.ts';
-import { guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.js';
+import { cacheForMiddleware, guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.js';
 import { GuildService } from './services/guildService.ts';
 import { RoleService } from './services/roleService.ts';
 import type { User } from '../types/user.ts';
 import type { Member } from '../types/member.ts';
+import ctx from '../context.ts';
 
 interface ErrorReponse {
   code: number;
@@ -19,7 +20,7 @@ interface ErrorReponse {
 
 const router = Router({ mergeParams: true });
 
-router.get('/:memberid', async (req: Request, res: Response) => {
+router.get('/:memberid', cacheForMiddleware(60 * 30, "private", false), async (req: Request, res: Response) => {
   return res.status(200).json(req.member);
 });
 
@@ -27,8 +28,8 @@ router.delete(
   '/:memberid',
   guildPermissionsMiddleware('KICK_MEMBERS'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.kickMember.maxPerTimeFrame,
-    global.config.ratelimit_config.kickMember.timeFrame,
+    ctx.config!.ratelimit_config.kickMember.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.kickMember.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -94,8 +95,8 @@ async function updateMember(member: Member, guild_id: string, roles?: (string | 
     }
     if (
       nick &&
-      (nick.length < global.config.limits['nickname'].min ||
-        nick.length >= global.config.limits['nickname'].max)
+      (nick.length < ctx.config!.limits['nickname'].min ||
+        nick.length >= ctx.config!.limits['nickname'].max)
     ) {
       return errors.response_400.INVALID_NICKNAME_LENGTH as ErrorReponse;
     }
@@ -136,8 +137,8 @@ router.patch(
   guildPermissionsMiddleware('MANAGE_ROLES'),
   guildPermissionsMiddleware('MANAGE_NICKNAMES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateMember.maxPerTimeFrame,
-    global.config.ratelimit_config.updateMember.timeFrame,
+    ctx.config!.ratelimit_config.updateMember.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateMember.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -171,8 +172,8 @@ router.patch(
   '/@me/nick',
   guildPermissionsMiddleware('CHANGE_NICKNAME'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateNickname.maxPerTimeFrame,
-    global.config.ratelimit_config.updateNickname.timeFrame,
+    ctx.config!.ratelimit_config.updateNickname.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateNickname.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {

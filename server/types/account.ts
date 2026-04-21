@@ -1,4 +1,3 @@
-import type { Relationship } from "./relationship.ts";
 import type { StaffDetails } from "./staff.ts";
 
 export interface FriendSourceFlags {
@@ -80,7 +79,6 @@ export interface Account {
     bot: boolean;
     webhook?: boolean;
     premium?: boolean;
-    relationships?: Relationship[];
     email?: string;
     password?: string; //Uh.. should probably not do this in the future for account updates.
     verified?: boolean;

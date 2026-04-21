@@ -5,8 +5,7 @@ import { GuildService } from "./guildService.ts";
 import globalUtils, { generateMemorableInviteCode, generateString } from "../../helpers/globalutils.ts";
 import type { Invite } from "../../types/invite.ts";
 import type { Guild } from "../../types/guild.ts";
-import type { User } from "../../types/user.ts";
-import { AccountService } from "./accountService.ts";
+import { PUBLIC_USER_SELECT } from "./accountService.ts";
 
 export const InviteService = {
     _formatInviteResponse(invite: any): Invite {
@@ -14,29 +13,29 @@ export const InviteService = {
             code: invite.code,
             temporary: invite.temporary,
             revoked: invite.revoked,
-            inviter: invite.inviter ? globalUtils.miniUserObject(invite.inviter) : null,
+            inviter: globalUtils.miniUserObject(invite.inviter),
             max_age: invite.maxAge,
             max_uses: invite.maxUses,
             uses: invite.uses,
             created_at: invite.createdAt,
-            guild: invite.guild ? {
+            guild: {
                 id: invite.guild.id,
                 name: invite.guild.name,
                 icon: invite.guild.icon,
                 splash: invite.guild.splash ?? null,
                 owner_id: invite.guild.owner_id,
                 features: Array.isArray(invite.guild.features) ? invite.guild.features : [],
-            } as Guild : null,
-            channel: invite.channel ? {
+            },
+            channel: {
                 id: invite.channel.id,
                 name: invite.channel.name,
                 guild_id: invite.guild?.id,
                 type: invite.channel.type,
-            } : null,
+            }
         };
     },
 
-    async getInviteByCode(code: string) {
+    async getInviteByCode(code: string): Promise<Invite> {
         const invite = await prisma.invite.findUnique({
             where: { code },
             include: {
@@ -57,14 +56,14 @@ export const InviteService = {
 
         return this._formatInviteResponse(invite);
     },
-    async useInvite(code: string, user: User): Promise<Guild> {
+    async useInvite(code: string, user_id: string): Promise<Guild> {
         const invite = await this.getInviteByCode(code);
 
         if (!invite) {
             throw { status: 404, error: 'UNKNOWN_GUILD' };
         }
 
-        const canJoin = await GuildService.canJoin(user.id, invite.guild!!.id);
+        const canJoin = await GuildService.canJoin(user_id, invite.guild!!.id);
 
         if (!canJoin.canJoin) {
             throw { status: 403, error: canJoin.reason };
@@ -81,15 +80,22 @@ export const InviteService = {
             }
         });
 
-        await GuildService.addMember(user, invite.guild!!.id);
+        await GuildService.addMember(user_id, invite.guild.id);
 
         return GuildService._formatResponse(invite.guild);
     },
     async createInvite(guild_id: string, channel_id: string, sender_id: string, temporary: boolean, max_uses: number, max_age: number, xkcdpass: boolean, regenerate: boolean): Promise<Invite | null> {
         try {
-            const sender = await AccountService.getById(sender_id);
+            const sender = await prisma.user.findUnique({
+                where: {
+                    id: sender_id
+                },
+                select: PUBLIC_USER_SELECT
+            });
 
-            if (!sender) return null;
+            if (!sender) {
+                return null;
+            }
 
             if (!regenerate) {
                 const existing = await prisma.invite.findFirst({
@@ -111,12 +117,11 @@ export const InviteService = {
                 });
 
                 if (existing) {
-                    return this._formatInviteResponse({ ...existing, inviter: globalUtils.miniUserObject(sender) });
+                    return this._formatInviteResponse({ ...existing, inviter: sender });
                 }
             }
 
             const code = xkcdpass ? generateMemorableInviteCode() : generateString(16);
-
             const newInvite = await prisma.invite.create({
                 data: {
                     code: code,
@@ -138,7 +143,7 @@ export const InviteService = {
                 }
             });
 
-            return this._formatInviteResponse({ ...newInvite, inviter: globalUtils.miniUserObject(sender) });
+            return this._formatInviteResponse({ ...newInvite, inviter: sender });
         } catch (error) {
             logText(error, 'error');
             return null;

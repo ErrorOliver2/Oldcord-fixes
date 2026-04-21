@@ -239,7 +239,7 @@ const embedder = {
       }
     }
 
-    if (!global.config.auto_embed_urls) {
+    if (!ctx.config!.auto_embed_urls) {
       return ret;
     }
 
@@ -265,7 +265,7 @@ const embedder = {
       }
 
       if (
-        (global.config.custom_invite_url != '' && url.includes(global.config.custom_invite_url)) ||
+        (ctx.config!.custom_invite_url != '' && url.includes(ctx.config!.custom_invite_url)) ||
         url.includes('/invite/') ||
         url.includes('/gifts/')
       ) {

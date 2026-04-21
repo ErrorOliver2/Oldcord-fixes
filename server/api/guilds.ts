@@ -5,6 +5,7 @@ import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
 import {
+  cacheForMiddleware,
   guildMiddleware,
   guildPermissionsMiddleware,
   instanceMiddleware,
@@ -19,10 +20,11 @@ import { ChannelService } from './services/channelService.ts';
 import { GuildService } from './services/guildService.ts';
 import permissions from '../helpers/permissions.ts';
 import { ChannelType } from '../types/channel.ts';
+import ctx from '../context.ts';
 
 const router = Router();
 
-router.get('/:guildid', guildMiddleware, async (req: Request, res: Response) => {
+router.get('/:guildid', guildMiddleware, cacheForMiddleware(60 * 10, "private", false), async (req: Request, res: Response) => {
   return res.status(200).json(req.guild);
 });
 
@@ -30,8 +32,8 @@ router.post(
   '/',
   instanceMiddleware('NO_GUILD_CREATION'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.createGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.createGuild.timeFrame,
+    ctx.config!.ratelimit_config.createGuild.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.createGuild.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -44,11 +46,11 @@ router.post(
       const client_date = req.client_build_date!!;
 
       if (
-        req.body.name.length < global.config.limits['guild_name'].min ||
-        req.body.name.length >= global.config.limits['guild_name'].max
+        req.body.name.length < ctx.config!.limits['guild_name'].min ||
+        req.body.name.length >= ctx.config!.limits['guild_name'].max
       ) {
         return res.status(400).json({
-          name: `Must be between ${global.config.limits['guild_name'].min} and ${global.config.limits['guild_name'].max} in length.`,
+          name: `Must be between ${ctx.config!.limits['guild_name'].min} and ${ctx.config!.limits['guild_name'].max} in length.`,
         });
       }
 
@@ -239,8 +241,8 @@ router.post(
   '/:guildid/delete',
   guildMiddleware,
   rateLimitMiddleware(
-    global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.leaveGuild.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.leaveGuild.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.leaveGuild.maxPerTimeFrame,
   ),
   guildDeleteRequest,
 );
@@ -249,8 +251,8 @@ router.delete(
   '/:guildid',
   guildMiddleware,
   rateLimitMiddleware(
-    global.config.ratelimit_config.deleteGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteGuild.timeFrame,
+    ctx.config!.ratelimit_config.deleteGuild.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.deleteGuild.timeFrame,
   ),
   guildDeleteRequest
 );
@@ -262,8 +264,8 @@ router.get(
   guildMiddleware,
   guildPermissionsMiddleware('READ_MESSAGE_HISTORY'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.messageSearching.maxPerTimeFrame,
-    global.config.ratelimit_config.messageSearching.timeFrame,
+    ctx.config!.ratelimit_config.messageSearching.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.messageSearching.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -318,9 +320,9 @@ router.get(
           continue;
         }
 
-        const canReadChannel = permissions.hasChannelPermissionTo(
-          channel,
-          guild,
+        const canReadChannel = await permissions.hasChannelPermissionTo(
+          channel.id,
+          guild.id,
           account.id,
           'READ_MESSAGES',
         );
@@ -354,8 +356,8 @@ router.patch(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateGuild.maxPerTimeFrame,
-    global.config.ratelimit_config.updateGuild.timeFrame,
+    ctx.config!.ratelimit_config.updateGuild.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateGuild.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -364,11 +366,11 @@ router.patch(
 
       if (
         req.body.name &&
-        (req.body.name.length < global.config.limits['guild_name'].min ||
-          req.body.name.length >= global.config.limits['guild_name'].max)
+        (req.body.name.length < ctx.config!.limits['guild_name'].min ||
+          req.body.name.length >= ctx.config!.limits['guild_name'].max)
       ) {
         return res.status(400).json({
-          name: `Must be between ${global.config.limits['guild_name'].min} and ${global.config.limits['guild_name'].max} in length.`,
+          name: `Must be between ${ctx.config!.limits['guild_name'].min} and ${ctx.config!.limits['guild_name'].max} in length.`,
         });
       }
 
@@ -500,8 +502,8 @@ router.put(
   '/:guildid/premium/subscriptions',
   guildMiddleware,
   rateLimitMiddleware(
-    global.config.ratelimit_config.subscriptions.maxPerTimeFrame,
-    global.config.ratelimit_config.subscriptions.timeFrame,
+    ctx.config!.ratelimit_config.subscriptions.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.subscriptions.timeFrame,
   ),
   async (req: Request, res: Response) => {
     const tryBoostServer = await GuildService.createGuildSubscription(req.account!!.id, req.guild!!.id);
@@ -521,8 +523,8 @@ router.delete(
   '/:guildid/premium/subscriptions/:subscriptionid',
   guildMiddleware,
   rateLimitMiddleware(
-    global.config.ratelimit_config.subscriptions.maxPerTimeFrame,
-    global.config.ratelimit_config.subscriptions.timeFrame,
+    ctx.config!.ratelimit_config.subscriptions.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.subscriptions.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -544,6 +546,7 @@ router.delete(
 router.get(
   '/:guildid/premium/subscriptions',
   guildMiddleware,
+  cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     const guild_subscriptions = await GuildService.getGuildSubscriptions(req.guild!!.id);
 
@@ -554,6 +557,7 @@ router.get(
 router.get(
   '/:guildid/embed',
   guildMiddleware,
+  cacheForMiddleware(60 * 30, "private", false),
   async (req: Request, res: Response) => {
     try {
       const widget = await GuildService.getGuildWidget(req.params.guildid as string);
@@ -600,6 +604,7 @@ router.get(
   '/:guildid/audit-logs',
   guildMiddleware,
   guildPermissionsMiddleware('MAANGE_GUILD'),
+  cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {
       /*
@@ -659,6 +664,7 @@ router.get(
   '/:guildid/invites',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
+  cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {
       const invites = await GuildService.getGuildInvites(req.params.guildid as string);
@@ -677,18 +683,18 @@ router.post(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_CHANNELS'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.createChannel.maxPerTimeFrame,
-    global.config.ratelimit_config.createChannel.timeFrame,
+    ctx.config!.ratelimit_config.createChannel.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.createChannel.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
       const sender = req.account!!;
       const guild = req.guild!!;
 
-      if (guild!!.channels!!.length >= global.config.limits['channels_per_guild'].max) {
+      if (guild!!.channels!!.length >= ctx.config!.limits['channels_per_guild'].max) {
         return res.status(400).json({
           code: 400,
-          message: `Maximum number of channels per guild exceeded (${global.config.limits['channels_per_guild'].max})`,
+          message: `Maximum number of channels per guild exceeded (${ctx.config!.limits['channels_per_guild'].max})`,
         });
       }
 
@@ -700,12 +706,12 @@ router.post(
       }
 
       if (
-        req.body.name.length < global.config.limits['channel_name'].min ||
-        req.body.name.length >= global.config.limits['channel_name'].max
+        req.body.name.length < ctx.config!.limits['channel_name'].min ||
+        req.body.name.length >= ctx.config!.limits['channel_name'].max
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${global.config.limits['channel_name'].min} and ${global.config.limits['channel_name'].max} characters.`,
+          name: `Must be between ${ctx.config!.limits['channel_name'].min} and ${ctx.config!.limits['channel_name'].max} characters.`,
         });
       }
 
@@ -764,7 +770,7 @@ router.post(
 
       channel.type = typeof req.body.type === 'string' ? req.body.type : number_type;
 
-      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'CHANNEL_CREATE', function (socket) {
+      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'CHANNEL_CREATE', function (socket: WebSocket) {
         return globalUtils.personalizeChannelObject(socket, channel);
       });
 
@@ -782,8 +788,8 @@ router.patch(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_CHANNELS'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateChannel.maxPerTimeFrame,
-    global.config.ratelimit_config.updateChannel.timeFrame,
+    ctx.config!.ratelimit_config.updateChannel.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateChannel.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -854,6 +860,7 @@ router.use('/:guildid/emojis', emojis);
 router.get(
   '/:guildid/webhooks',
   guildMiddleware,
+  cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {
       const guild = req.guild!!;
@@ -871,6 +878,7 @@ router.get(
 router.get(
   '/:guildid/regions',
   guildMiddleware,
+  cacheForMiddleware(60 * 60 * 5, "private", false),
   (_req: Request, res: Response) => {
     return res.status(200).json(globalUtils.getRegions());
   },
@@ -889,6 +897,7 @@ router.get(
   '/:guildid/vanity-url',
   guildMiddleware,
   guildPermissionsMiddleware('ADMINISTRATOR'),
+  cacheForMiddleware(60 * 10, "private", false),
   async (req: Request, res: Response) => {
     try {
       return res.status(200).json({

@@ -30,7 +30,7 @@ router.get('/authorize', async (req: Request, res: Response) => {
     const oauthDetails = await OAuthService.getOAuthDetails(
       client_id as string,
       scope as string,
-      account,
+      account.id,
       req.is_staff!!,
       req.staff_details?.privilege || 0
     );

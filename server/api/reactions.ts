@@ -3,19 +3,20 @@ import { Router, type Request, type Response } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
-import { channelPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, channelPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
 import { MessageService } from './services/messageService.ts';
 import { ChannelType } from '../types/channel.ts';
 import permissions from '../helpers/permissions.ts';
 import { prisma } from '../prisma.ts';
+import ctx from '../context.ts';
 
 const router = Router({ mergeParams: false });
 
 router.delete(
   ['/:urlencoded/@me', '/:urlencoded/%40me'],
   rateLimitMiddleware(
-    global.config.ratelimit_config.removeReaction.maxPerTimeFrame,
-    global.config.ratelimit_config.removeReaction.timeFrame,
+    ctx.config!.ratelimit_config.removeReaction.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.removeReaction.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -90,8 +91,8 @@ router.delete(
   '/:urlencoded/:userid',
   channelPermissionsMiddleware('MANAGE_MESSAGES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.removeReaction.maxPerTimeFrame,
-    global.config.ratelimit_config.removeReaction.timeFrame,
+    ctx.config!.ratelimit_config.removeReaction.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.removeReaction.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -165,8 +166,8 @@ router.delete(
 router.put(
   ['/:urlencoded/@me', '/:urlencoded/%40me'],
   rateLimitMiddleware(
-    global.config.ratelimit_config.addReaction.maxPerTimeFrame,
-    global.config.ratelimit_config.addReaction.timeFrame,
+    ctx.config!.ratelimit_config.addReaction.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.addReaction.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -213,7 +214,7 @@ router.put(
       const reactionExists = message.reactions?.some((x) => JSON.stringify(x.emoji) === reactionKey);
 
       if (!reactionExists) {
-        const canAdd = permissions.hasChannelPermissionTo(
+        const canAdd = await permissions.hasChannelPermissionTo(
           req.channel,
           req.guild,
           req.account!!.id,
@@ -259,7 +260,7 @@ router.put(
   },
 );
 
-router.get('/:urlencoded', async (req: Request, res: Response) => {
+router.get('/:urlencoded', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const channel = req.channel!!;
     const guild = req.guild!!;

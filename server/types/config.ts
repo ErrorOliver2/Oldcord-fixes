@@ -23,10 +23,9 @@ export interface Config {
     default_user_intents : {
         value : number;
     };
+    tenor_api_key: string;
     require_release_date_cookie: boolean;
     cache_authenticated_get_requests: boolean;
-    auto_embed_urls: boolean;
-    save_missing_cdn_assets_locally: boolean;
     klipy_api_key: string;
     mr_server: {
         enabled: boolean;

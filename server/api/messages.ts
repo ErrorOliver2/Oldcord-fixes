@@ -11,6 +11,7 @@ import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
 import {
+  cacheForMiddleware,
   channelPermissionsMiddleware,
   instanceMiddleware,
   rateLimitMiddleware,
@@ -25,6 +26,8 @@ import type { Account } from '../types/account.ts';
 import { RelationshipType } from '../types/relationship.ts';
 import { GuildService } from './services/guildService.ts';
 import type { Message } from '../types/message.ts';
+import permissions from '../helpers/permissions.ts';
+import ctx from '../context.ts';
 
 const upload = multer();
 const router = Router({ mergeParams: true });
@@ -39,6 +42,8 @@ function handleJsonAndMultipart(req: Request, res: Response, next: NextFunction)
     json()(req, res, next);
   }
 }
+
+//..We shouldn't cache this
 
 router.get(
   '/',
@@ -97,8 +102,8 @@ router.post(
   handleJsonAndMultipart,
   channelPermissionsMiddleware('SEND_MESSAGES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.sendMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.sendMessage.timeFrame,
+    ctx.config!.ratelimit_config.sendMessage.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.sendMessage.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -136,8 +141,8 @@ router.post(
       } //this aswell
 
       if (req.body.content && !req.body.embeds) {
-        const min = global.config.limits['messages'].min;
-        const max = global.config.limits['messages'].max;
+        const min = ctx.config!.limits['messages'].min;
+        const max = ctx.config!.limits['messages'].max;
 
         if (req.body.content.length < min || req.body.content.length > max) {
           return res.status(400).json({
@@ -239,7 +244,7 @@ router.post(
 
       if (
         (mentions_data.mention_everyone || mentions_data.mention_here) &&
-        !permissions.hasChannelPermissionTo(
+        !await permissions.hasChannelPermissionTo(
           req.channel,
           req.guild,
           author.id,
@@ -333,7 +338,7 @@ router.post(
               return senderAllows && recipientAllows;
             });
 
-            if (global.config.require_friendship_for_dm) {
+            if (ctx.config!.require_friendship_for_dm) {
               return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
             }
 
@@ -359,7 +364,7 @@ router.post(
 
         if (
           req.body.tts &&
-          !permissions.hasChannelPermissionTo(
+          !await permissions.hasChannelPermissionTo(
             req.channel,
             req.guild,
             author.id,
@@ -372,13 +377,13 @@ router.post(
 
         if (
           channel.rate_limit_per_user!! > 0 &&
-          !permissions.hasChannelPermissionTo(
+          !await permissions.hasChannelPermissionTo(
             req.channel,
             req.guild,
             author.id,
             'MANAGE_CHANNELS',
           ) &&
-          !permissions.hasChannelPermissionTo(
+          !await permissions.hasChannelPermissionTo(
             req.channel,
             req.guild,
             author.id,
@@ -388,7 +393,7 @@ router.post(
           const key = `${author.id}-${channel.id}`;
           const ratelimit = channel.rate_limit_per_user!! * 1000;
           const currentTime = Date.now();
-          const lastMessageTimestamp = global.slowmodeCache.get(key) || 0;
+          const lastMessageTimestamp = ctx.slowmodeCache.get(key) || 0;
           const difference = currentTime - lastMessageTimestamp;
 
           if (difference < ratelimit) {
@@ -400,7 +405,7 @@ router.post(
             });
           }
 
-          global.slowmodeCache.set(key, currentTime);
+          ctx.slowmodeCache.set(key, currentTime);
         } //Slowmode implementation
       }
 
@@ -408,10 +413,10 @@ router.post(
 
       if (req.files) {
         for (var file of req.files) {
-          if (file.size >= global.config.limits['attachments'].max_size) {
+          if (file.size >= ctx.config!.limits['attachments'].max_size) {
             return res.status(400).json({
               code: 400,
-              message: `Message attachments cannot be larger than ${global.config.limits['attachments'].max_size} bytes.`,
+              message: `Message attachments cannot be larger than ${ctx.config!.limits['attachments'].max_size} bytes.`,
             });
           }
 
@@ -513,7 +518,7 @@ router.post(
       if (!message) throw 'Message creation failed';
 
       if (mentions_data.mention_everyone || mentions_data.mention_here) {
-        global.database
+        ctx.database
           .incrementMentions(
             channel.id,
             req.guild!!.id,
@@ -566,8 +571,8 @@ router.delete(
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('MANAGE_MESSAGES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.deleteMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteMessage.timeFrame,
+    ctx.config!.ratelimit_config.deleteMessage.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.deleteMessage.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -611,8 +616,8 @@ router.patch(
   '/:messageid',
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.updateMessage.timeFrame,
+    ctx.config!.ratelimit_config.updateMessage.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateMessage.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -635,7 +640,7 @@ router.patch(
       //TODO:
       //FIXME: this needs to use globalUtils.parseMentions
       if (req.body.content && req.body.content.includes('@everyone')) {
-        const pCheck = permissions.hasChannelPermissionTo(
+        const pCheck = await permissions.hasChannelPermissionTo(
           req.channel,
           req.guild,
           message.author.id,
@@ -669,8 +674,8 @@ router.post(
   '/:messageid/ack',
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.ackMessage.maxPerTimeFrame,
-    global.config.ratelimit_config.ackMessage.timeFrame,
+    ctx.config!.ratelimit_config.ackMessage.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.ackMessage.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {

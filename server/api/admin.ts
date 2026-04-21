@@ -259,7 +259,7 @@ router.get('/@me', staffAccessMiddleware(1), async (req: Request, res: Response)
     const publicAccount = toPublicAccount(
       req.account!!,
       req.staff_details,
-      ctx.config?.mfa_required_for_admin as boolean
+      ctx.config?.instance.flags.includes("MFA_REQUIRED_FOR_ADMIN") as boolean
     );
 
     return res.status(200).json(publicAccount);

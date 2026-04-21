@@ -38,7 +38,7 @@ const setupNames = JSON.parse(
   }),
 );
 
-function setDownloadHeaders(res, downloadPath) {
+function setDownloadHeaders(res: Response, downloadPath: string) {
   if (downloadPath.includes('win')) {
     res.header('content-type', 'application/vnd.microsoft.portable-executable');
     res.header('content-disposition', `attachment; filename=${setupNames.windows}`);
@@ -46,7 +46,7 @@ function setDownloadHeaders(res, downloadPath) {
 }
 
 // tar.br files need to be application/octet-stream
-function setPatchedHeaders(res, downloadPath, stat) {
+function setPatchedHeaders(res: Response, downloadPath: string, stat: any) {
   res.header('X-Content-Length', stat.size);
   if (downloadPath.includes('.distro')) {
     res.header('content-type', 'application/octet-stream');

@@ -8,7 +8,7 @@ import type { Bot } from "../../types/bot.ts";
 import type { StaffDetails } from "../../types/staff.ts";
 
 
-const PUBLIC_USER_SELECT = {
+export const PUBLIC_USER_SELECT = {
     id: true,
     username: true,
     discriminator: true,
@@ -49,11 +49,7 @@ export const AccountService = {
             created_at: user.created_at ?? "",
             settings: user.settings as unknown as AccountSettings,
             guild_settings: user.guild_settings as unknown as GuildSettings[],
-            staff: user.staff ? (user.staff as unknown as StaffDetails) : undefined,
-            relationships: [
-                ...user.sentRelationships.map((r: any) => this._mapUserToRelationship(r, 'sent')),
-                ...user.receivedRelationships.map((r: any) => this._mapUserToRelationship(r, 'received'))
-            ]
+            staff: user.staff ? (user.staff as unknown as StaffDetails) : undefined
         };
     },
 
@@ -157,7 +153,7 @@ export const AccountService = {
             }
 
             const valid = totp.verify({
-                secret: mfa_status.mfa_secret || overriden_secret,
+                secret: mfa_status.mfa_secret || overriden_secret!,
                 encoding: 'base32',
                 token: code,
             });

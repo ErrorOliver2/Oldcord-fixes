@@ -11,6 +11,7 @@ import type { LoginSuccessResponse } from "../../types/responses/loginSuccessRes
 import type { LoginMFARequiredResponse } from "../../types/responses/loginMFARequiredResponse.ts";
 import type { StaffDetails } from "../../types/staff.ts";
 import { logText } from "../../helpers/logger.ts";
+import ctx from "../../context.ts";
 
 export const AuthService = {
     async register(data: AccountRegisterPayload): Promise<string | null> {
@@ -76,11 +77,11 @@ export const AuthService = {
             });
 
             if (emailToken) {
-                await global.emailer.sendRegistrationEmail(data.email, emailToken, newUser);
+                await ctx.emailer?.sendRegistrationEmail(data.email, emailToken, newUser as User);
             }
 
             if (data.invite) {
-                await InviteService.useInvite(data.invite, newUser as User);
+                await InviteService.useInvite(data.invite, newUser.id);
             }
 
             const autoJoinGuild = config.instance.flags.filter((x) =>
@@ -90,7 +91,7 @@ export const AuthService = {
             if (autoJoinGuild.length > 0) {
                 let guildId = autoJoinGuild[0].split(':')[1];
 
-                await GuildService.addMember(newUser as User, guildId);
+                await GuildService.addMember(newUser.id, guildId);
             }
 
             return newUser.token!!;

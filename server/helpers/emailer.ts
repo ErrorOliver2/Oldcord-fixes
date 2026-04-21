@@ -2,6 +2,8 @@ import { readFileSync } from 'fs';
 import { replaceAll } from './globalutils.ts';
 import { logText } from './logger.ts';
 import type { Account } from '../types/account.ts';
+import ctx from '@/context.ts';
+import type { User } from '@/types/user.ts';
 
 export interface EmailConfig {
   fromAddress: string;
@@ -91,16 +93,16 @@ class Emailer {
     }
   }
 
-  private getBaseTemplate(templatePath: string, emailToken: string, account: Account): string {
+  private getBaseTemplate(templatePath: string, emailToken: string, account: User): string {
     let html = readFileSync(templatePath, 'utf8');
 
     const replacements: Record<string, string> = {
       '[username]': account.username,
       '[discriminator]': String(account.discriminator),
-      '[instance]': global.config.instance.name,
-      '[protocol]': global.config.secure ? 'https' : 'http',
-      '[assets_cdn_url]': global.config.assets_cdn_url || 'cdn.oldcordapp.com',
-      '[domain]': global.full_url,
+      '[instance]': ctx.config?.instance.name,
+      '[protocol]': ctx.config?.secure ? 'https' : 'http',
+      '[assets_cdn_url]': ctx.config?.assets_cdn_url || 'cdn.oldcordapp.com',
+      '[domain]': ctx.full_url,
       '[ffnum]': '2',
       '[email_token]': emailToken,
       '[fftext]': 'The bushes and clouds in the original Super Mario Bros are the same sprite recolored.',
@@ -139,7 +141,7 @@ class Emailer {
 
       return await this.trySendEmail(
         to,
-        `Password Reset Request for ${global.config.instance.name}`,
+        `Password Reset Request for ${ctx.config!.instance.name}`,
         htmlContent
       );
     } catch (error) {

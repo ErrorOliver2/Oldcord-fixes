@@ -2,7 +2,7 @@ import { Router } from 'express';
 
 import globalUtils, { generateString } from '../../../helpers/globalutils.ts';
 import { logText } from '../../../helpers/logger.ts';
-import { rateLimitMiddleware } from '../../../helpers/middlewares.ts';
+import { cacheForMiddleware, rateLimitMiddleware } from '../../../helpers/middlewares.ts';
 import type { Request, Response } from "express";
 
 const router = Router();
@@ -20,26 +20,37 @@ import { compareSync } from 'bcrypt';
 import { MessageService } from '../../../api/services/messageService.ts'
 import { AccountService } from '../../../api/services/accountService.ts';
 import type { Account } from '../../../types/account.ts';
+import ctx from '../../../context.ts';
 
 router.use('/relationships', relationships);
 router.use('/connections', connections);
 router.use('/guilds', guilds);
 router.use('/billing', billing);
 
-//Or this
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
+    const { 
+      id, username, discriminator, email, verified, 
+      avatar, bot, created_at, flags, premium 
+    } = req.account!!;
+
+    const userProfile = {
+      id,
+      username,
+      discriminator,
+      email,
+      verified,
+      avatar,
+      bot,
+      created_at,
+      flags,
+      premium
+    };
+
     return res
       .status(200)
       .json(
-        globalUtils.sanitizeObject(req.account, [
-          'settings',
-          'token',
-          'password',
-          'relationships',
-          'disabled_until',
-          'disabled_reason',
-        ]),
+        userProfile
       );
   } catch (error) {
     logText(error, 'error');
@@ -51,8 +62,8 @@ router.get('/', async (req: Request, res: Response) => {
 router.patch(
   '/',
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateMe.maxPerTimeFrame,
-    global.config.ratelimit_config.updateMe.timeFrame,
+    ctx.config!.ratelimit_config.updateMe.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateMe.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -65,12 +76,12 @@ router.patch(
         }
 
         if (
-          account.username.length < global.config.limits['username'].min ||
-          account.username.length >= global.config.limits['username'].max
+          account.username.length < ctx.config!.limits['username'].min ||
+          account.username.length >= ctx.config!.limits['username'].max
         ) {
           return res.status(400).json({
             code: 400,
-            username: `Must be between ${global.config.limits['username'].min} and ${global.config.limits['username'].max} characters.`,
+            username: `Must be between ${ctx.config!.limits['username'].min} and ${ctx.config!.limits['username'].max} characters.`,
           });
         }
 
@@ -428,7 +439,7 @@ router.patch(
 ); //someone PLEASE clean this up SOMEHOW
 
 //Or this
-router.get('/settings', async (req: Request, res: Response) => {
+router.get('/settings', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account!!;
 
@@ -443,7 +454,7 @@ router.get('/settings', async (req: Request, res: Response) => {
 router.patch('/settings', async (req: Request, res: Response) => {
   try {
     const account = req.account!!;
-    const new_settings = account.settings;
+    const new_settings = account.settings as any;
 
     if (new_settings == null) {
       return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
@@ -467,9 +478,9 @@ router.patch('/settings', async (req: Request, res: Response) => {
     await dispatcher.dispatchEventTo(account.id, 'USER_SETTINGS_UPDATE', settings);
 
     if (req.body.status) {
-      const userSessions = global.userSessions.get(account.id);
+      const userSessions = ctx.userSessions.get(account.id);
 
-      if (userSessions && userSessions.size > 0) {
+      if (userSessions && userSessions.length > 0) {
         for (const session of userSessions) {
           session.presence.status = req.body.status.toLowerCase();
         }
@@ -575,7 +586,7 @@ router.put('/notes/:userid', async (req: Request, res: Response) => {
 
 //Leaving guilds in late 2016
 
-router.get('/mentions', async (req: Request, res: Response) => {
+router.get('/mentions', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account!!;
     const limit = parseInt(req.query.limit as string) ?? 25;
@@ -654,8 +665,8 @@ router.get('/affinities/guilds', (_req: Request, res: Response) => {
 router.post(
   '/mfa/totp/enable',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -748,8 +759,8 @@ router.post(
 router.post(
   '/mfa/totp/disable',
   rateLimitMiddleware(
-    global.config.ratelimit_config.registration.maxPerTimeFrame,
-    global.config.ratelimit_config.registration.timeFrame,
+    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.registration.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {

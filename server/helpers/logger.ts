@@ -9,8 +9,8 @@ const logText = (text: any, type: string) => {
     return;
   }
 
-  if (!global.config.debug_logs) {
-    global.config.debug_logs = {
+  if (!ctx.config!.debug_logs) {
+    ctx.config!.debug_logs = {
       gateway: true,
       rtc: true,
       media: true,
@@ -22,21 +22,21 @@ const logText = (text: any, type: string) => {
     }; //compatibility
   }
 
-  if (!global.config.debug_logs['errors'] && type === 'error') {
+  if (!ctx.config!.debug_logs['errors'] && type === 'error') {
     return;
   }
 
-  if (!global.config.debug_logs['dispatcher'] && type === 'dispatcher') {
+  if (!ctx.config!.debug_logs['dispatcher'] && type === 'dispatcher') {
     return;
   }
 
-  if (!global.config.debug_logs['watchdog'] && type === 'watchdog') {
+  if (!ctx.config!.debug_logs['watchdog'] && type === 'watchdog') {
     return;
   }
 
   const restTags = ['oldcord', 'debug', 'emailer'];
 
-  if (!global.config.debug_logs['rest'] && restTags.includes(type.toLowerCase())) {
+  if (!ctx.config!.debug_logs['rest'] && restTags.includes(type.toLowerCase())) {
     return;
   }
 

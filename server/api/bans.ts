@@ -3,18 +3,20 @@ import { Router } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
 const router = Router({ mergeParams: true });
 import errors from '../helpers/errors.ts';
 import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import type { User } from '../types/user.ts';
+import ctx from '../context.ts';
 
 //to-do move to use a service
 
 router.get(
   '/',
   guildPermissionsMiddleware('BAN_MEMBERS'),
+  cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {
       const bans = await prisma.ban.findMany({
@@ -49,8 +51,8 @@ router.put(
   '/:memberid',
   guildPermissionsMiddleware('BAN_MEMBERS'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.bans.maxPerTimeFrame,
-    global.config.ratelimit_config.bans.timeFrame,
+    ctx.config!.ratelimit_config.bans.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.bans.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -68,9 +70,9 @@ router.put(
         member = {
           id: req.params.memberid as string,
           user: {
-            id: req.params.memberid as string,
-          },
-        };
+            id: req.params.memberid as string
+          } as any,
+        } as any;
       }
 
       if (userInGuild) {
@@ -162,8 +164,8 @@ router.delete(
   '/:memberid',
   guildPermissionsMiddleware('BAN_MEMBERS'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.bans.maxPerTimeFrame,
-    global.config.ratelimit_config.bans.timeFrame,
+    ctx.config!.ratelimit_config.bans.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.bans.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {

@@ -14,7 +14,7 @@ import type { Webhook } from '../webhook.ts';
 declare global {
   namespace Express {
     interface Request {
-      client_build?: string;
+      client_build: string;
       account?: Account | null;
       member?: Member | null;
       role?: Role | null;

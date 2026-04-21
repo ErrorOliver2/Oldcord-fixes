@@ -8,16 +8,19 @@ import { AccountService } from '../services/accountService.ts';
 import { RelationshipService } from '../services/relationshipService.ts';
 import { RelationshipType } from '../../types/relationship.ts';
 import type { Account } from '../../types/account.ts';
+import { cacheForMiddleware } from '../../helpers/middlewares.ts';
 
 const router = Router();
 
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account!;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT); //bots.. ermm
     }
+
+    const relationships = 
 
     return res.status(200).json(account.relationships ?? []);
   } catch (error) {

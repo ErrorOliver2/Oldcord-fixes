@@ -244,7 +244,7 @@ class MediasoupSignalingDelegate {
     if (!this._rooms.has(roomId)) {
       const worker = this.getNextWorker();
       const router = await worker.createRouter({
-        mediaCodecs: global.MEDIA_CODECS,
+        mediaCodecs: ctx.MEDIA_CODECS,
       });
 
       const data = {

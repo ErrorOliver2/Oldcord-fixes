@@ -266,7 +266,7 @@ export const ChannelService = {
         name: string,
         type: number,
         position: number,
-        recipients: User[] = [],
+        recipient_ids: string[] = [],
         owner_id: string | null = null,
         parent_id: string | null = null,
     ): Promise<Channel | null> {
@@ -288,8 +288,8 @@ export const ChannelService = {
             });
 
             if (isPrivate) {
-                const recipientIDs = recipients.map(r => typeof r === 'string' ? r : r.id);
-                const recipientUsers = await this._getRecipientObjects(recipients);
+                const recipientIDs = recipient_ids;
+                const recipientUsers = await this._getRecipientObjects(recipient_ids);
 
                 if (type === ChannelType.DM) {
                     // DM Channel
@@ -358,16 +358,14 @@ export const ChannelService = {
         }
     },
 
-    async updateChannelRecipients(channel_id: string, recipients: User[]): Promise<boolean> {
+    async updateChannelRecipients(channel_id: string, recipients: string[]): Promise<boolean> {
         try {
-            if (!recipients) return false;
-
-            const recipientIDs = recipients.map(r => typeof r === 'string' ? r : r.id);
+            if (!recipients.length) return false;
 
             await prisma.groupChannel.update({
                 where: { id: channel_id },
                 data: {
-                    recipients: recipientIDs
+                    recipients: recipients
                 }
             });
 

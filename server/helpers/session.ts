@@ -566,7 +566,7 @@ class session implements Session {
               channel.type = channel.type == 2 ? 'voice' : 'text';
             }
 
-            const can_see = permissions.hasChannelPermissionTo(
+            const can_see = await permissions.hasChannelPermissionTo(
               channel.id,
               guild.id,
               this.user.id,

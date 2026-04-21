@@ -731,7 +731,7 @@ app.use('/assets', express.static(path.join(process.cwd(), 'www_dynamic', 'asset
 
 app.use('/assets/:asset', assetsMiddleware);
 
-if (ctx.config.serveDesktopClient) {
+if (ctx.config!.serveDesktopClient) {
   const desktop = require('./api/desktop');
 
   app.use(desktop);

@@ -9,6 +9,7 @@ import { RoleService } from './services/roleService.ts';
 import type { Request, Response } from "express";
 import type { User } from '../types/user.ts';
 import { prisma } from '../prisma.ts';
+import ctx from '../context.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -20,8 +21,8 @@ router.patch(
   '/:roleid',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateRole.maxPerTimeFrame,
-    global.config.ratelimit_config.updateRole.timeFrame,
+    ctx.config!.ratelimit_config.updateRole.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.updateRole.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -42,12 +43,12 @@ router.patch(
       }
 
       if (
-        req.body.name.length < global.config.limits['role_name'].min ||
-        req.body.name.length >= global.config.limits['role_name'].max
+        req.body.name.length < ctx.config!.limits['role_name'].min ||
+        req.body.name.length >= ctx.config!.limits['role_name'].max
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${global.config.limits['role_name'].min} and ${global.config.limits['role_name'].max} characters.`,
+          name: `Must be between ${ctx.config!.limits['role_name'].min} and ${ctx.config!.limits['role_name'].max} characters.`,
         });
       }
 
@@ -86,8 +87,8 @@ router.delete(
   '/:roleid',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.deleteRole.maxPerTimeFrame,
-    global.config.ratelimit_config.deleteRole.timeFrame,
+    ctx.config!.ratelimit_config.deleteRole.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.deleteRole.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -134,8 +135,8 @@ router.patch(
   '/',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.updateRole.maxPerTimeFrame,
-    global.config.ratelimit_config.createRole.timeFrame,
+    ctx.config!.ratelimit_config.updateRole.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.createRole.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
@@ -193,17 +194,17 @@ router.post(
   '/',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    global.config.ratelimit_config.createRole.maxPerTimeFrame,
-    global.config.ratelimit_config.createRole.timeFrame,
+    ctx.config!.ratelimit_config.createRole.maxPerTimeFrame,
+    ctx.config!.ratelimit_config.createRole.timeFrame,
   ),
   async (req: Request, res: Response) => {
     try {
       const guild = req.guild!!;
 
-      if (guild.roles!!.length >= global.config.limits['roles_per_guild'].max) {
+      if (guild.roles!!.length >= ctx.config!.limits['roles_per_guild'].max) {
         return res.status(400).json({
           code: 400,
-          message: `Maximum number of roles per guild exceeded (${global.config.limits['roles_per_guild'].max})`,
+          message: `Maximum number of roles per guild exceeded (${ctx.config!.limits['roles_per_guild'].max})`,
         });
       }
 

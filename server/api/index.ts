@@ -33,7 +33,7 @@ import { InviteService } from './services/inviteService.ts';
 import type { Account } from '../types/account.ts';
 import { ChannelType } from '../types/channel.ts';
 
-global.config = config;
+ctx.config = config;
 //just in case
 
 app.use('/auth', auth);

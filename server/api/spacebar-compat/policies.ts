@@ -8,10 +8,10 @@ const router = Router();
 
 router.get('/instance/domains', (req: Request, res: Response) => {
   const instanceDomainsResponse: SpacebarInstanceDomains = {
-    cdn: `${config.secure ? 'https://' : 'http://'}${global.full_url}`, //for user uploaded attachments
+    cdn: `${config.secure ? 'https://' : 'http://'}${ctx.full_url}`, //for user uploaded attachments
     gateway: generateGatewayURL(req),
     defaultApiVersion: '6',
-    apiEndpoint: `${config.secure ? 'https://' : 'http://'}${global.full_url}/api`,
+    apiEndpoint: `${config.secure ? 'https://' : 'http://'}${ctx.full_url}/api`,
   };
 
   return res.json(instanceDomainsResponse);
