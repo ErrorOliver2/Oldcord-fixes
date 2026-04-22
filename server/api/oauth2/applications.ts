@@ -9,7 +9,7 @@ import { OAuthService } from '../services/oauthService.ts';
 import { UploadService } from '../services/uploadService.ts';
 
 router.get('/', async (req: Request, res: Response) => {
-  const account = req.account!!;
+  const account = req.account;
 
   const apps = await prisma.application.findMany({
     where: { owner_id: account.id },
@@ -22,7 +22,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const name = req.body.name;
-    const account = req.account!!;
+    const account = req.account;
 
     if (!name) {
       return res.status(400).json({
@@ -50,7 +50,7 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.get('/:applicationid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
 
     if (!req.application) {
       return res.status(404).json(errors.response_404.UNKNOWN_APPLICATION);
@@ -70,7 +70,7 @@ router.get('/:applicationid', async (req: Request, res: Response) => {
 
 router.patch('/:applicationid', async (req: Request, res) => {
   const { application } = req;
-  const account = req.account!!;
+  const account = req.account;
 
   if (!application || application.owner_id !== account.id) {
     return res.status(404).json(errors.response_404.UNKNOWN_APPLICATION);
@@ -131,7 +131,7 @@ router.patch('/:applicationid', async (req: Request, res) => {
 //I don't know if this is even necessary, yolo
 router.delete('/:applicationid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const application = req.application;
 
     if (!application || application.owner.id != account.id) {
@@ -150,7 +150,7 @@ router.delete('/:applicationid', async (req: Request, res: Response) => {
 
 router.post('/:applicationid/bot', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const application = req.application;
 
     if (!application || application.owner.id != account.id) {
@@ -176,7 +176,7 @@ router.post('/:applicationid/bot', async (req: Request, res: Response) => {
 
 router.post('/:applicationid/delete', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const application = req.application;
 
     if (!application || application.owner.id != account.id) {

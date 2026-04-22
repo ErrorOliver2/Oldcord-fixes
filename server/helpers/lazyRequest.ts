@@ -2,6 +2,7 @@ import { murmur3 } from 'murmurhash-js';
 import dispatcher from './dispatcher.ts';
 import globalUtils from './globalutils.ts';
 import { GuildService } from '../api/services/guildService.ts';
+import permissions from './permissions.ts';
 
 const lazyRequest = {
   getSortedList: (guild: any): any => {
@@ -45,7 +46,7 @@ const lazyRequest = {
 
     const perms: string[] = [];
 
-    channel.permission_overwrites.forEach((overwrite) => {
+    channel.permission_overwrites.forEach((overwrite: any) => {
       if (overwrite.allow & READ_MESSAGES) {
         perms.push(`allow:${overwrite.id}`);
       } else if (overwrite.deny & READ_MESSAGES) {
@@ -60,7 +61,7 @@ const lazyRequest = {
     return murmur3(perms.sort().join(','), 0).toString();
   },
   computeMemberList: (guild: any, channel: any, ranges: any, bypassPerms = false): any => {
-    function arrayPartition(array, callback) {
+    function arrayPartition(array: any, callback: any) {
       return array.reduce(
         ([pass, fail], elem) => {
           return callback(elem) ? [[...pass, elem], fail] : [pass, [...fail, elem]];

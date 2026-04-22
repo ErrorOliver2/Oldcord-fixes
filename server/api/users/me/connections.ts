@@ -12,7 +12,7 @@ const router = Router();
 
 router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
@@ -42,7 +42,7 @@ router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Reques
 
 router.delete('/:platform/:connectionid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const { platform, connectionid } = req.params;
 
     if (account.bot) {
@@ -108,11 +108,11 @@ router.delete('/:platform/:connectionid', async (req: Request, res: Response) =>
 
 router.patch('/:platform/:connectionid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const { platform, connectionid } = req.params;
     const { visibility } = req.body;
 
-    if (account.bot) {
+    if (account?.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
     }
 
@@ -129,7 +129,7 @@ router.patch('/:platform/:connectionid', async (req: Request, res: Response) => 
       where: {
         account_id: connectionid as string,
         platform: platform as string,
-        user_id: account.id,
+        user_id: account?.id,
       },
       data: {
         visibility: visibility === 1, 
@@ -140,7 +140,7 @@ router.patch('/:platform/:connectionid', async (req: Request, res: Response) => 
       return res.status(404).json(errors.response_404.UNKNOWN_CONNECTION);
     }
 
-    await dispatcher.dispatchEventTo(account.id, 'USER_CONNECTIONS_UPDATE', {});
+    await dispatcher.dispatchEventTo(account?.id, 'USER_CONNECTIONS_UPDATE', {});
 
     const connectedAccounts = await prisma.connectedAccount.findMany({
       where: { user_id: account.id },

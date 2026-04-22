@@ -16,6 +16,7 @@ import type { Account } from '../types/account.ts';
 import { ChannelType, type Channel } from '../types/channel.ts';
 import type { Bot } from '../types/bot.ts';
 import ctx from '../context.ts';
+import { RelationshipType } from '../types/relationship.ts';
 
 const configPath = './config.json';
 
@@ -786,39 +787,25 @@ const globalUtils = {
 
     return user;
   },
-  areWeFriends: (user1_id: string, user2_id: string): Promise<boolean> => {
-    if (user1.bot || user2.bot) {
-      return false;
-    }
-    const ourRelationships = user1.relationships;
-    const theirRelationships = user2.relationships;
+  areWeFriends: async (user1_id: string, user2_id: string): Promise<boolean> => {
+    const relationship = await prisma.relationship.findFirst({
+      where: {
+        OR: [
+          { user_id_1: user1_id, user_id_2: user2_id },
+          { user_id_1: user2_id, user_id_2: user1_id }
+        ],
+        type: RelationshipType.FRIEND
+      }
+    });
 
-    let relationshipState = theirRelationships.find((x) => x.id === user1.id);
-    let ourRelationshipState = ourRelationships.find((x) => x.id === user2.id);
-
-    if (!ourRelationshipState) {
-      ourRelationships.push({
-        id: user2.id,
-        type: 0,
-        user: globalUtils.miniUserObject(user2),
-      });
-
-      ourRelationshipState = ourRelationships.find((x) => x.user.id == user2.id);
-    }
-
-    if (!relationshipState) {
-      theirRelationships.push({
-        id: user1.id,
-        type: 0,
-        user: globalUtils.miniUserObject(user1),
-      });
-
-      relationshipState = theirRelationships.find((x) => x.id === user1.id);
-    }
-
-    return relationshipState.type === 1 && ourRelationshipState.type === 1;
+    return !!relationship;
   },
-  parseMentions: (text: string): any => {
+  parseMentions: (text: string): {
+    mentions: string[],
+    mention_roles: string[],
+    mention_everyone: boolean,
+    mention_here: boolean
+  } => {
     const result = {
       mentions: [],
       mention_roles: [],
@@ -945,7 +932,7 @@ const globalUtils = {
       return;
     }
 
-    let userPrivChannels: any = user.private_channels || [];
+    let userPrivChannels: Channel[] = user.private_channels as unknown as Channel[];
     let sendCreate = !userPrivChannels.includes(private_channel.id);
 
     userPrivChannels = [
@@ -955,11 +942,11 @@ const globalUtils = {
 
     await prisma.user.update({
       where: { id: recipient_id },
-      data: { private_channels: userPrivChannels }
+      data: { private_channels: JSON.stringify(userPrivChannels) }
     });
 
     if (sendCreate) {
-      await dispatcher.dispatchEventTo(recipient_id, 'CHANNEL_CREATE', function (socket) {
+      await dispatcher.dispatchEventTo(recipient_id, 'CHANNEL_CREATE', function (socket: WebSocket) {
         return globalUtils.personalizeChannelObject(socket, private_channel);
       });
     }
@@ -1008,7 +995,7 @@ const globalUtils = {
       9: 1,
       10: 2,
       11: 3,
-    };
+    } as Record<number, number>;
 
     if (msg.id === '643945264868098049') {
       msg.content = msg.content.replace('[YEAR]', client_build_date.getFullYear());
@@ -1137,7 +1124,7 @@ const globalUtils = {
       messages.forEach(msg => {
         if (msg.author_id) uniqueUserIds.add(msg.author_id);
         const { mentions } = parseMentions(msg.content || '');
-        mentions?.forEach((id: string) => uniqueUserIds.add(id));
+        mentions?.forEach((id) => uniqueUserIds.add(id));
       });
 
       const users = await prisma.user.findMany({

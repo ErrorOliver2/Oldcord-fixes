@@ -1,3 +1,4 @@
+import type { Reaction } from "./reaction.ts";
 import type { User } from "./user.ts";
 
 export enum MessageType {
@@ -29,7 +30,7 @@ export interface Message {
   mention_roles: string[];
   attachments: any[];
   embeds: any[];
-  reactions?: any[];
+  reactions?: Reaction[];
   nonce?: string | number;
   pinned: boolean;
   webhook_id?: string;

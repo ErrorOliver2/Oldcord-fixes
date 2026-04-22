@@ -6,7 +6,7 @@ import { prisma } from '../../../prisma.ts';
 import type { GuildSubscription } from '../../../types/guild.ts';
 
 router.get('/subscriptions', async (req: Request, res: Response) => {
-  const account = req.account!!;
+  const account = req.account;
   const subscriptions = await prisma.guildSubscription.findMany({
       where: { user_id: account.id },
       select: {

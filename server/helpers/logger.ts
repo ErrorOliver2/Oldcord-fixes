@@ -1,3 +1,5 @@
+import ctx from "../context.ts";
+
 const properties = {
   ignoreDebug: false,
   disabled: false,
@@ -17,6 +19,7 @@ const logText = (text: any, type: string) => {
       udp: true,
       rest: true,
       dispatcher: true,
+      mr: true,
       errors: true,
       watchdog: true,
     }; //compatibility

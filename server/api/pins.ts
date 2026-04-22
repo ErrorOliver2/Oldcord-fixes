@@ -14,7 +14,7 @@ const router = Router({ mergeParams: true });
 
 router.get('/', channelMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const channel = req.channel!!;
+    const channel = req.channel;
     const pinned_messages = await prisma.message.findMany({
       where: {
         pinned: true,
@@ -22,9 +22,7 @@ router.get('/', channelMiddleware, cacheForMiddleware(60 * 5, "private", false),
       }
     });
 
-    const formattedMessages = pinned_messages.map(msg => 
-       (msg as any).toPublic((msg as any).author)
-    );
+    const formattedMessages = await MessageService._formatMessageBatch(pinned_messages, req.account.id, false);
 
     return res.status(200).json(formattedMessages);
   } catch (error) {
@@ -36,9 +34,9 @@ router.get('/', channelMiddleware, cacheForMiddleware(60 * 5, "private", false),
 
 router.put('/:messageid', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const channel = req.channel!!;
-    const message = req.message!!;
-    const guild = req.guild!!;
+    const channel = req.channel;
+    const message = req.message;
+    const guild = req.guild;
 
     if (message.pinned) {
       //should we tell them?
@@ -91,9 +89,9 @@ router.put('/:messageid', channelMiddleware, async (req: Request, res: Response)
 
 router.delete('/:messageid', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const channel = req.channel!!;
-    const message = req.message!!;
-    const guild = req.guild!!;
+    const channel = req.channel;
+    const message = req.message;
+    const guild = req.guild;
 
     if (!message.pinned) {
       //should we tell them?
@@ -126,8 +124,8 @@ router.delete('/:messageid', channelMiddleware, async (req: Request, res: Respon
 
 router.post('/ack', channelMiddleware, async (req: Request, res: Response) => {
   try {
-    const userId = req.account!!.id;
-    const channelId = req.channel!!.id;
+    const userId = req.account.id;
+    const channelId = req.channel.id;
 
     const latestPin = await prisma.message.findFirst({
       where: {

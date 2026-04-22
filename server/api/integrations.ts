@@ -40,7 +40,7 @@ router.get(
       const results = data.results || [];
 
       const gifs = results
-        .map((gif) => {
+        .map((gif: any) => {
           const media = gif.media_formats?.tinygif;
           return {
             type: 'gif',
@@ -50,7 +50,7 @@ router.get(
             height: 100,
           };
         })
-        .filter((g) => g.src !== null);
+        .filter((g: any) => g.src !== null);
 
       return res.json(gifs);
     } catch (err) {

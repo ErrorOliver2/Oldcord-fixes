@@ -56,7 +56,7 @@ router.put(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
+      const sender = req.account;
 
       if (sender.id == req.params.memberid) {
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
@@ -71,15 +71,15 @@ router.put(
           id: req.params.memberid as string,
           user: {
             id: req.params.memberid as string
-          } as any,
-        } as any;
+          }
+        } as any; //mmhmm.. need to move this to use partial member object
       }
 
       if (userInGuild) {
         await prisma.member.delete({
           where: {
             guild_id_user_id: {
-              user_id: member?.id!!,
+              user_id: member?.id,
               guild_id: req.params.guildid as string
             }
           }
@@ -94,11 +94,11 @@ router.put(
       });
 
       if (userInGuild) {
-        await dispatcher.dispatchEventTo(member?.id!!, 'GUILD_DELETE', {
+        await dispatcher.dispatchEventTo(member?.id, 'GUILD_DELETE', {
           id: req.params.guildid,
         });
 
-        await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_MEMBER_REMOVE', {
+        await dispatcher.dispatchEventInGuild(req.guild.id, 'GUILD_MEMBER_REMOVE', {
           type: 'ban',
           moderator: globalUtils.miniUserObject(sender),
           user: globalUtils.miniUserObject(member?.user as User),
@@ -121,7 +121,7 @@ router.put(
           let messages = await prisma.message.findMany({
             where: {
               guild_id: req.params.guildid as string,
-              author_id: member?.user!!.id,
+              author_id: member?.user.id,
               timestamp: {
                 gte: cutoffDate.toString()
               }
@@ -136,7 +136,7 @@ router.put(
 
               if (deleteResult) {
                 await dispatcher.dispatchEventInChannel(
-                  req.guild!!.id,
+                  req.guild.id,
                   message.channel_id!,
                   'MESSAGE_DELETE',
                   {
@@ -169,7 +169,7 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
+      const sender = req.account;
 
       if (sender.id == req.params.memberid) {
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);

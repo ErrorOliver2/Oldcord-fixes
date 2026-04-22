@@ -13,7 +13,7 @@ router.use('/tokens', tokens);
 router.get('/authorize', async (req: Request, res: Response) => {
   try {
     const { client_id, scope } = req.query;
-    const account = req.account!!;
+    const account = req.account;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
@@ -31,7 +31,7 @@ router.get('/authorize', async (req: Request, res: Response) => {
       client_id as string,
       scope as string,
       account.id,
-      req.is_staff!!,
+      req.is_staff,
       req.staff_details?.privilege || 0
     );
 
@@ -51,7 +51,7 @@ router.post('/authorize', async (req: Request, res: Response) => {
     const { client_id } = req.query;
     const { guild_id, bot_guild_id } = req.body;
     const targetGuildId = bot_guild_id || guild_id;
-    const account = req.account!!;
+    const account = req.account;
 
     await OAuthService.authorizeBotToGuild(client_id as string, targetGuildId, account.id);
 

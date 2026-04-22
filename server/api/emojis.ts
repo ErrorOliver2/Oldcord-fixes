@@ -20,7 +20,7 @@ router.get(
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
+      const guild = req.guild;
       const emojis = guild.emojis;
 
       return res.status(200).json(emojis);
@@ -34,8 +34,8 @@ router.get(
 
 router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
-    const guild = req.guild!!;
+    const account = req.account;
+    const guild = req.guild;
 
     if (guild.emojis!!.length >= ctx.config!.limits['emojis_per_guild'].max) {
       return res.status(404).json({
@@ -142,7 +142,7 @@ router.patch(
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
+      const guild = req.guild;
       const emoji_id = req.params.emoji as string;
       const emoji = guild.emojis!!.find((x) => x.id === emoji_id);
 
@@ -167,8 +167,8 @@ router.patch(
         });
       }
 
-      const emojis = guild.emojis!!; 
-      const customEmoji = emojis.find((x) => x.id === emoji_id);
+      const emojis = guild.emojis; 
+      const customEmoji = emojis!!.find((x) => x.id === emoji_id);
 
       if (!customEmoji) {
         return res.status(404).json(errors.response_404.UNKNOWN_EMOJI);
@@ -235,16 +235,16 @@ router.delete(
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
+      const guild = req.guild;
       const emoji_id = req.params.emoji;
-      const emojis = guild.emojis!!;
-      const emojiExists = emojis.some((x) => x.id === emoji_id);
+      const emojis = guild.emojis;
+      const emojiExists = emojis!!.some((x) => x.id === emoji_id);
 
       if (!emojiExists) {
         return res.status(404).json(errors.response_404.UNKNOWN_EMOJI);
       }
 
-      const filteredEmojis = emojis.filter((x) => x.id !== emoji_id);
+      const filteredEmojis = emojis!!.filter((x) => x.id !== emoji_id);
 
       const updatedGuild = await prisma.guild.update({
         where: { id: guild.id },

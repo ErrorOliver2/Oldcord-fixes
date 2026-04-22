@@ -63,7 +63,7 @@ export const InviteService = {
             throw { status: 404, error: 'UNKNOWN_GUILD' };
         }
 
-        const canJoin = await GuildService.canJoin(user_id, invite.guild!!.id);
+        const canJoin = await GuildService.canJoin(user_id, invite.guild.id);
 
         if (!canJoin.canJoin) {
             throw { status: 403, error: canJoin.reason };

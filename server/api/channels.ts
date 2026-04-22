@@ -35,7 +35,7 @@ router.get(
   async (req: Request, res: Response) => {
     return res
       .status(200)
-      .json(globalUtils.personalizeChannelObject(req, req.channel!!, req.account!!)); //req.account is a dirty hack ok
+      .json(globalUtils.personalizeChannelObject(req, req.channel, req.account!!)); //req.account is a dirty hack ok
   },
 );
 
@@ -50,13 +50,13 @@ router.post(
   ),
   async (req: Request, res: Response) => {
     try {
-      const channel = req.channel!!;
-      const account = req.account!!;
+      const channel = req.channel;
+      const account = req.account;
 
       var payload = {
         channel_id: req.params.channelid,
         guild_id: channel.guild_id,
-        user_id: account!!.id,
+        user_id: account.id,
         timestamp: new Date().toISOString(),
         member: req.member,
       };
@@ -93,7 +93,7 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      let channel = req.channel!!;
+      let channel = req.channel;
 
       if (!channel.guild_id && channel.type !== ChannelType.GROUPDM) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL); //Can only modify guild channels lol -- okay update, they can modify group channels too
@@ -170,8 +170,8 @@ router.patch(
       }
 
       await dispatcher.dispatchEventToAllPerms(
-        channel.guild_id!!,
-        channel.id!!,
+        channel.guild_id,
+        channel.id,
         'READ_MESSAGES',
         'CHANNEL_UPDATE',
         channel,
@@ -210,7 +210,7 @@ router.get(
   channelMiddleware,
   async (req: Request, res: Response) => {
     try {
-      const channel = req.channel!!;
+      const channel = req.channel;
 
       if (channel.type !== ChannelType.DM && channel.type !== ChannelType.GROUPDM) {
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
@@ -234,7 +234,7 @@ router.post(
   channelMiddleware,
   async (req: Request, res: Response) => {
     try {
-      const channel = req.channel!!;
+      const channel = req.channel;
 
       if (channel.type !== ChannelType.DM && channel.type !== ChannelType.GROUPDM) {
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
@@ -262,9 +262,9 @@ router.post(
   channelPermissionsMiddleware('CREATE_INSTANT_INVITE'),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const guild = req.guild!!;
-      const channel = req.channel!!;
+      const sender = req.account;
+      const guild = req.guild;
+      const channel = req.channel;
 
       if (config.instance.flags.includes('NO_INVITE_CREATION')) {
         return res.status(400).json({
@@ -321,8 +321,8 @@ router.get(
   channelPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
-      const channel = req.channel!!;
+      const guild = req.guild;
+      const channel = req.channel;
       const webhooks = guild.webhooks?.filter((x) => x.channel_id === channel.id);
 
       return res.status(200).json(webhooks);
@@ -341,9 +341,9 @@ router.post(
   channelPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
-      const account = req.account!!;
-      const guild = req.guild!!;
-      const channel = req.channel!!;
+      const account = req.account;
+      const guild = req.guild;
+      const channel = req.channel;
 
       if (!req.body.name) {
         req.body.name = 'Captain Hook';
@@ -392,8 +392,8 @@ router.put(
         });
       } //figure out this response
 
-      let channel: Channel | null = req.channel!!;
-      let guild = req.guild!!;
+      let channel: Channel | null = req.channel;
+      let guild = req.guild;
 
       const channel_overwrites = await ChannelService.getChannelPermissionOverwrites(
         channel.id
@@ -454,11 +454,11 @@ router.put(
       channel = await ChannelService.getChannelById(channel.id); //do this better
 
       if (!req.channel_types_are_ints) {
-        channel!!.type = channel!!.type == ChannelType.VOICE ? 'voice' : 'text';
+        channel.type = channel.type == ChannelType.VOICE ? 'voice' : 'text';
       }
 
-      await dispatcher.dispatchEventInChannel(req.guild!!.id, channel!!.id, 'CHANNEL_UPDATE', channel);
-      await lazyRequest.syncMemberList(req.guild, req.account!!.id); //do this just in case they deny/allow everyone to view a previously locked off/just unlocked channel
+      await dispatcher.dispatchEventInChannel(req.guild.id, channel.id, 'CHANNEL_UPDATE', channel);
+      await lazyRequest.syncMemberList(req.guild, req.account.id); //do this just in case they deny/allow everyone to view a previously locked off/just unlocked channel
 
       return res.status(204).send();
     } catch (error) {
@@ -479,7 +479,7 @@ router.delete(
       const id = req.params.id;
       const channel_id = req.params.channelid as string;
 
-      let channel: Channel | null = req.channel!!;
+      let channel: Channel | null = req.channel;
 
       const channel_overwrites = await ChannelService.getChannelPermissionOverwrites(
         channel.id
@@ -492,7 +492,7 @@ router.delete(
       }
 
       if (overwriteIndex === -1) {
-        await dispatcher.dispatchEventInChannel(req.guild!!.id, channel.id, 'CHANNEL_UPDATE', channel);
+        await dispatcher.dispatchEventInChannel(req.guild.id, channel.id, 'CHANNEL_UPDATE', channel);
 
         return res.status(204).send();
       }
@@ -512,8 +512,8 @@ router.delete(
         channel.type = channel.type == ChannelType.VOICE ? 'voice' : 'text';
       }
 
-      await dispatcher.dispatchEventInChannel(req.guild!!.id, channel.id, 'CHANNEL_UPDATE', channel);
-      await lazyRequest.syncMemberList(req.guild, req.account!!.id); //do this just in case they deny/allow everyone to view a previously 
+      await dispatcher.dispatchEventInChannel(req.guild.id, channel.id, 'CHANNEL_UPDATE', channel);
+      await lazyRequest.syncMemberList(req.guild, req.account.id); //do this just in case they deny/allow everyone to view a previously 
 
       return res.status(204).send();
     } catch (error) {
@@ -535,8 +535,8 @@ router.put(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const channel = req.channel!!;
+      const sender = req.account;
+      const channel = req.channel;
 
       if (channel.type !== ChannelType.GROUPDM) {
         return res.status(403).json({
@@ -609,8 +609,8 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const channel = req.channel!!;
+      const sender = req.account;
+      const channel = req.channel;
 
       if (channel.type !== ChannelType.GROUPDM) {
         return res.status(403).json({
@@ -666,8 +666,8 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const channel = req.channel!!;
+      const sender = req.account;
+      const channel = req.channel;
 
       if (channel.type !== ChannelType.GROUPDM && channel.type !== ChannelType.DM) {
         if (req.guild && req.guild.channels?.length === 1) {
@@ -715,7 +715,7 @@ router.delete(
           channel.recipients = newRecipientsList;
 
           //handover logic
-          if (channel.owner_id === sender.id && newRecipientsList!!.length > 0) {
+          if (channel.owner_id === sender.id && newRecipientsList.length > 0) {
             const newOwnerId = newRecipientsList!![0].id;
 
             channel.owner_id = newOwnerId;
@@ -723,7 +723,7 @@ router.delete(
             if (!(await ChannelService.updateChannel(channel.id, channel, true))) {
               throw 'Failed to transfer ownership of group channel';
             }
-          } else if (newRecipientsList!!.length === 0) {
+          } else if (newRecipientsList.length === 0) {
             await ChannelService.deleteChannel(channel.id);
             return res.status(204).send(); //delete group channel to free up the db
           }
@@ -745,7 +745,7 @@ router.delete(
           });
         }
 
-        await dispatcher.dispatchEventInChannel(req.guild!!.id, channel.id, 'CHANNEL_DELETE', {
+        await dispatcher.dispatchEventInChannel(req.guild.id, channel.id, 'CHANNEL_DELETE', {
           id: channel.id,
           guild_id: channel.guild_id,
         });

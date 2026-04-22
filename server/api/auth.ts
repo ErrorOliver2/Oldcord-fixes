@@ -413,8 +413,16 @@ router.post(
       const account = await prisma.user.findUnique({
         where: {
           token: auth_token
+        },
+        select: {
+          id: true,
+          username: true,
+          discriminator: true,
+          verified: true,
+          email_token: true,
+          email: true
         }
-      })
+      });
 
       if (!account) {
         return res.status(401).json(errors.response_401.UNAUTHORIZED);
@@ -437,9 +445,12 @@ router.post(
       }
 
       const trySendRegEmail = await ctx.emailer?.sendRegistrationEmail(
-        account.email!!,
+        account.email!,
         emailToken,
-        account,
+        {
+          username: account.username!,
+          discriminator: account.discriminator!!
+        },
       );
 
       if (!trySendRegEmail) {

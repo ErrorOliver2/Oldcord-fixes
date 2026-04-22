@@ -33,24 +33,24 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const member = req.member!!;
+      const sender = req.account;
+      const member = req.member;
 
       if (member == null) {
         return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
       }
 
-      const attempt = await GuildService.leave(member.user!!.id, req.params.guildid as string);
+      const attempt = await GuildService.leave(member.user.id, req.params.guildid as string);
 
       if (!attempt) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      await dispatcher.dispatchEventTo(member.user!!.id, 'GUILD_DELETE', {
+      await dispatcher.dispatchEventTo(member.user.id, 'GUILD_DELETE', {
         id: req.params.guildid,
       });
 
-      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_MEMBER_REMOVE', {
+      await dispatcher.dispatchEventInGuild(req.guild.id, 'GUILD_MEMBER_REMOVE', {
         type: 'kick',
         moderator: globalUtils.miniUserObject(sender as User),
         user: globalUtils.miniUserObject(member.user!! as User),
@@ -90,7 +90,7 @@ async function updateMember(member: Member, guild_id: string, roles?: (string | 
   }
 
   if (nick !== undefined && nick !== member.nick) {
-    if (nick === '' || nick === member.user!!.username) {
+    if (nick === '' || nick === member.user.username) {
       nick = null as unknown as string;
     }
     if (
@@ -103,7 +103,7 @@ async function updateMember(member: Member, guild_id: string, roles?: (string | 
 
     nickChanged = true;
 
-    const success = await GuildService.updateGuildMemberNick(guild_id, member.user!!.id, nick);
+    const success = await GuildService.updateGuildMemberNick(guild_id, member.user.id, nick);
 
     if (!success) {
       return errors.response_500.INTERNAL_SERVER_ERROR as ErrorReponse;
@@ -142,8 +142,8 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      const member = req.member!!;
-      const guild = req.guild!!;
+      const member = req.member;
+      const guild = req.guild;
 
       const newMember = await updateMember(member, guild.id, req.body.roles, req.body.nick);
 
@@ -154,7 +154,7 @@ router.patch(
       return res.status(200).json({
         user: globalUtils.miniUserObject(newMember.user),
         nick: newMember.nick,
-        guild_id: req.guild!!.id,
+        guild_id: req.guild.id,
         roles: newMember.roles,
         joined_at: new Date().toISOString(),
         deaf: false,
@@ -177,14 +177,14 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      const account = req.account!!;
-      const member = req.guild!!.members?.find((y) => y.id == account.id); 
+      const account = req.account;
+      const member = req.guild.members?.find((y) => y.id == account.id); 
 
       if (!member) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      const newMember = await updateMember(member, req.guild!!.id, undefined, req.body.nick);
+      const newMember = await updateMember(member, req.guild.id, undefined, req.body.nick);
 
       if ("code" in newMember) {
         return res.status(newMember.code).json(newMember);

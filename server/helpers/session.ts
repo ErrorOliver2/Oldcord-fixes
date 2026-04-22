@@ -554,7 +554,7 @@ class session implements Session {
           for (let channel of guild.channels!!) {
             if ((year === 2017 && month < 9) || year < 2017) {
               if (channel.type === ChannelType.CATEGORY) {
-                guild.channels = guild.channels!!.filter((x) => x.id !== channel.id);
+                guild.channels = guild.channels?.filter((x) => x.id !== channel.id);
               }
             }
 
@@ -574,7 +574,7 @@ class session implements Session {
             );
 
             if (!can_see) {
-              guild.channels = guild.channels!!.filter((x) => x.id !== channel.id);
+              guild.channels = guild.channels?.filter((x) => x.id !== channel.id);
 
               continue;
             }
@@ -682,7 +682,7 @@ class session implements Session {
       const guildSettings = this.user.guild_settings;
       const notes = await AccountService.getNotes(this.user.id);
 
-      this.relationships = this.user.relationships!!;
+      this.relationships = this.user.relationships;
       this.application = await OAuthService.getApplicationById(this.user.id);
 
       this.readyUp({

@@ -10,6 +10,9 @@ import type { Request, Response } from "express";
 import { prisma } from '../../prisma.ts';
 import type { User } from '../../types/user.ts';
 import ctx from '../../context.ts';
+import { RelationshipType } from '../../types/relationship.ts';
+import { PUBLIC_USER_SELECT } from '../services/accountService.ts';
+import type { ConnectedAccount } from '../../types/account.ts';
 
 const router = Router();
 
@@ -29,7 +32,7 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       let recipients = req.body.recipients;
-      const account = req.account!!;
+      const account = req.account;
 
       if (req.body.recipient_id) {
         recipients = [req.body.recipient_id];
@@ -152,8 +155,8 @@ router.post(
 
 router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
-    const user = req.user!!;
+    const account = req.account;
+    const user = req.user;
     const ret: any = {};
 
     const guilds = await prisma.guild.findMany({
@@ -175,6 +178,7 @@ router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "priva
         guild.members.length > 0 &&
         guild.members.some((member) => member.user_id === account.id),
     );
+
     const mutualGuilds: any = [];
 
     for (var sharedGuild of sharedGuilds) {
@@ -194,38 +198,53 @@ router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "priva
 
     ret.mutual_guilds = req.query.with_mutual_guilds === 'false' ? undefined : mutualGuilds;
 
-    const sharedFriends: any = [];
-
-    if (!user.bot) {
-      const ourFriends = account.relationships;
-      const theirFriends = user.relationships;
-
-      if (ourFriends.length > 0 && theirFriends.length > 0) {
-        const theirFriendsSet = new Set(
-          theirFriends.map((friend) => friend.user.id && friend.type == 1),
-        ) as Set<string>;
-
-        for (const ourFriend of ourFriends) {
-          if (theirFriendsSet.has(ourFriend.user.id) && ourFriend.type == 1) {
-            sharedFriends.push(globalUtils.miniUserObject(ourFriend.user));
+    const sharedFriendsRaw = await prisma.user.findMany({
+      where: {
+        receivedRelationships: {
+          some: {
+            user_id_1: user.id,
+            type: RelationshipType.FRIEND
+          }
+        },
+        sentRelationships: {
+          some: {
+            user_id_2: account.id,
+            type: RelationshipType.FRIEND
           }
         }
-      }
-    }
+    },
+    select: PUBLIC_USER_SELECT
+  });
 
-    ret.mutual_friends = sharedFriends;
+    ret.mutual_friends = sharedFriendsRaw.map(friend =>
+      globalUtils.miniUserObject(friend as User)
+    );
 
-    let connectedAccounts = await prisma.connectedAccount.findMany({
+    const connectedAccounts = await prisma.connectedAccount.findMany({
       where: {
-        user_id: user.id
+        user_id: user.id,
+        visibility: true
+      },
+      select: {
+        account_id: true,
+        username: true,
+        platform: true,
+        connected_at: true,
+        friendSync: true,
       }
     });
 
-    connectedAccounts = connectedAccounts.filter((x) => x.visibility == true);
-
-    connectedAccounts.forEach(
-      (x) => (x = globalUtils.sanitizeObject(x, ['integrations', 'revoked', 'visibility'])),
-    );
+    connectedAccounts.map((connectedAccount) => {
+      return {
+        id: connectedAccount.account_id,
+        type: connectedAccount.platform,
+        name: connectedAccount.username,
+        revoked: false,
+        integrations: [],
+        visibility: true,
+        friendSync: connectedAccount.friendSync
+      } as ConnectedAccount
+    });
 
     ret.user = globalUtils.miniUserObject(user);
     ret.connected_accounts = connectedAccounts;
@@ -252,11 +271,9 @@ router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "priva
   }
 });
 
-//Never share this cache because it's mutuals and whatnot, different for each requester
-//We're gonna remove the userMiddleware from this since it needs to work on users we're friends with without any guilds in common
 router.get('/:userid/relationships', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
@@ -264,31 +281,35 @@ router.get('/:userid/relationships', cacheForMiddleware(60 * 5, "private", false
 
     if (req.params.userid === '456226577798135808') {
       return res.status(200).json([]);
-    } //Return [] for the deleted user account
+    }
 
-    const user = req.user!!;
+    const user = req.user;
 
     if (user.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
-    } // I think this is more professional
-
-    const ourFriends = account.relationships;
-    const theirFriends = user.relationships;
-    const sharedFriends: User[] = [];
-
-    for (var ourFriend of ourFriends) {
-      for (var theirFriend of theirFriends) {
-        if (
-          theirFriend.user.id === ourFriend.user.id &&
-          theirFriend.type === 1 &&
-          ourFriend.type === 1
-        ) {
-          sharedFriends.push(globalUtils.miniUserObject(theirFriend.user));
-        }
-      }
     }
 
-    return res.status(200).json(sharedFriends);
+    const mutualFriends = await prisma.user.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { receivedRelationships: { some: { user_id_1: account.id, type: RelationshipType.FRIEND } } },
+              { sentRelationships: { some: { user_id_2: account.id, type: RelationshipType.FRIEND } } },
+            ],
+          },
+          {
+            OR: [
+              { receivedRelationships: { some: { user_id_1: user.id, type: RelationshipType.FRIEND } } },
+              { sentRelationships: { some: { user_id_2: user.id, type: RelationshipType.FRIEND } } },
+            ],
+          }
+        ],
+      },
+      select: PUBLIC_USER_SELECT
+    });
+    
+    return res.status(200).json(mutualFriends);
   } catch (error) {
     logText(error, 'error');
 

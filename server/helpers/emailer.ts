@@ -1,9 +1,7 @@
 import { readFileSync } from 'fs';
 import { replaceAll } from './globalutils.ts';
 import { logText } from './logger.ts';
-import type { Account } from '../types/account.ts';
-import ctx from '@/context.ts';
-import type { User } from '@/types/user.ts';
+import ctx from '../context.ts';
 
 export interface EmailConfig {
   fromAddress: string;
@@ -93,14 +91,17 @@ class Emailer {
     }
   }
 
-  private getBaseTemplate(templatePath: string, emailToken: string, account: User): string {
+  private getBaseTemplate(templatePath: string, emailToken: string, account: {
+    username: string,
+    discriminator: string
+  }): string {
     let html = readFileSync(templatePath, 'utf8');
 
     const replacements: Record<string, string> = {
       '[username]': account.username,
       '[discriminator]': String(account.discriminator),
-      '[instance]': ctx.config?.instance.name,
-      '[protocol]': ctx.config?.secure ? 'https' : 'http',
+      '[instance]': ctx.config!.instance.name,
+      '[protocol]': ctx.config!.secure ? 'https' : 'http',
       '[assets_cdn_url]': ctx.config?.assets_cdn_url || 'cdn.oldcordapp.com',
       '[domain]': ctx.full_url,
       '[ffnum]': '2',
@@ -116,7 +117,10 @@ class Emailer {
     return html;
   }
 
-  async sendRegistrationEmail(to: string, emailToken: string, account: Account): Promise<boolean> {
+  async sendRegistrationEmail(to: string, emailToken: string, account: {
+    username: string,
+    discriminator: string
+  }): Promise<boolean> {
     try {
       const htmlContent = this.getBaseTemplate(
         './www_static/assets/emails/verify-email.html',
@@ -131,7 +135,10 @@ class Emailer {
     }
   }
 
-  async sendForgotPassword(to: string, emailToken: string, account: Account): Promise<boolean> {
+  async sendForgotPassword(to: string, emailToken: string, account: {
+    username: string,
+    discriminator: string
+  }): Promise<boolean> {
     try {
       const htmlContent = this.getBaseTemplate(
         './www_static/assets/emails/password-reset-request-for-discord.html',

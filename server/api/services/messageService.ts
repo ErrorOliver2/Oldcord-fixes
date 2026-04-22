@@ -6,6 +6,7 @@ import { deconstruct, generate } from "../../helpers/snowflake.ts";
 import embedder from "../../helpers/embedder.ts";
 import type { Message } from "../../types/message.ts";
 import type { User } from "../../types/user.ts";
+import ctx from "../../context.ts";
 
 export const MessageService = {
     async _formatMessageBatch(messages: any[], requesterId?: string, includeReactions: boolean = true): Promise<Message[]> {
@@ -145,7 +146,12 @@ export const MessageService = {
         }
     },
 
-    async updateMessage(messageId: string, messageContent: string): Promise<Message | null> {
+    async updateMessage(messageId: string, messageContent: string, mentionsData: {
+        mentions: string[];
+        mention_roles: string[];
+        mention_everyone: boolean;
+        mention_here: boolean;
+    }): Promise<Message | null> {
         try {
             const message = await prisma.message.update({
                 where: {
@@ -160,7 +166,7 @@ export const MessageService = {
                 }
             });
 
-            const mentionsData = parseMentions(message.content || "");
+            //DEBUG THIS FIRST DEBUG DEBUG
             const mentionAccounts = await AccountService.getByIds(mentionsData.mentions || []);
             const mentions = mentionAccounts.map(acc => globalUtils.miniUserObject(acc));
             const reactions = typeof message.reactions === 'string' 
@@ -175,6 +181,62 @@ export const MessageService = {
         }
     },
 
+    async incrementMentions(channelId: string, guildId: string | null, mentionType: 'everyone' | 'here'): Promise<boolean> {
+        try {
+            let userIds: string[] = [];
+
+            if (mentionType === 'everyone' && guildId) {
+                const members = await prisma.member.findMany({
+                    where: { guild_id: guildId },
+                    select: { user_id: true }
+                });
+                userIds = members.map(m => m.user_id);
+            } else if (mentionType === 'here' && guildId) {
+                const onlineUserIds = [];
+                
+                for (const [userId, sessions] of ctx.userSessions) {
+                    const isVisible = sessions.some(s => !s.dead && s.presence?.status !== 'offline' && s.presence?.status !== 'invisible');
+                    
+                    if (isVisible) {
+                        onlineUserIds.push(userId);
+                    }
+                }
+
+                if (onlineUserIds.length === 0) {
+                    return false;
+                }
+
+                const onlineGuildMembers = await prisma.member.findMany({
+                    where: {
+                        guild_id: guildId,
+                        user_id: { in: onlineUserIds }
+                    },
+                    select: { user_id: true }
+                });
+
+                userIds = onlineGuildMembers.map(m => m.user_id);
+            }
+
+            if (userIds.length === 0) {
+                return false;
+            }
+
+            await prisma.$transaction(
+                userIds.map(uid => 
+                    prisma.acknowledgement.upsert({
+                        where: { user_id_channel_id: { user_id: uid, channel_id: channelId } },
+                        update: { mention_count: { increment: 1 } },
+                        create: { user_id: uid, channel_id: channelId, mention_count: 1, message_id: '0' }
+                    })
+                )
+            );
+
+            return true;
+        } catch (error) {
+            logText(error, 'error');
+            return false;
+        }
+    },
 
     async getRecentMentions(
         userId: string,

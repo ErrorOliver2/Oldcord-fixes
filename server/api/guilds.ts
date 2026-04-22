@@ -43,7 +43,7 @@ router.post(
         });
       }
 
-      const client_date = req.client_build_date!!;
+      const client_date = req.client_build_date;
 
       if (
         req.body.name.length < ctx.config!.limits['guild_name'].min ||
@@ -54,7 +54,7 @@ router.post(
         });
       }
 
-      const creator = req.account!!;
+      const creator = req.account;
 
       if (!req.body.region) {
         req.body.region = 'everything'; // default to everything bc of third party clients / mobile
@@ -182,8 +182,8 @@ router.post(
 
 async function guildDeleteRequest(req: Request, res: Response) {
   try {
-    const user = req.account!!;
-    const guild = req.guild!!;
+    const user = req.account;
+    const guild = req.guild;
 
     if (guild.owner_id == user.id) {
       const code = req.body.code;
@@ -221,7 +221,7 @@ async function guildDeleteRequest(req: Request, res: Response) {
         id: req.params.guildid,
       });
 
-      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_MEMBER_REMOVE', {
+      await dispatcher.dispatchEventInGuild(req.guild.id, 'GUILD_MEMBER_REMOVE', {
         type: 'leave',
         user: globalUtils.miniUserObject(user),
         guild_id: String(req.params.guildid),
@@ -269,8 +269,8 @@ router.get(
   ),
   async (req: Request, res: Response) => {
     try {
-      const account = req.account!!;
-      const guild = req.guild!!;
+      const account = req.account;
+      const guild = req.guild;
       const channelsMap = new Map();
 
       for (const channel of guild.channels!!) {
@@ -361,8 +361,8 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      let guild = req.guild!!;
+      const sender = req.account;
+      let guild = req.guild;
 
       if (
         req.body.name &&
@@ -440,7 +440,7 @@ router.patch(
           return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
         }
 
-        await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_UPDATE', guild);
+        await dispatcher.dispatchEventInGuild(req.guild.id, 'GUILD_UPDATE', guild);
 
         return res.status(200).json(guild);
       }
@@ -469,7 +469,7 @@ router.patch(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'GUILD_UPDATE', guild);
+      await dispatcher.dispatchEventInGuild(req.guild.id, 'GUILD_UPDATE', guild);
 
       return res.status(200).json(guild);
     } catch (error) {
@@ -506,7 +506,7 @@ router.put(
     ctx.config!.ratelimit_config.subscriptions.timeFrame,
   ),
   async (req: Request, res: Response) => {
-    const tryBoostServer = await GuildService.createGuildSubscription(req.account!!.id, req.guild!!.id);
+    const tryBoostServer = await GuildService.createGuildSubscription(req.account.id, req.guild.id);
 
     if (!tryBoostServer) {
       return res.status(400).json({
@@ -548,7 +548,7 @@ router.get(
   guildMiddleware,
   cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
-    const guild_subscriptions = await GuildService.getGuildSubscriptions(req.guild!!.id);
+    const guild_subscriptions = await GuildService.getGuildSubscriptions(req.guild.id);
 
     return res.status(200).json(guild_subscriptions);
   },
@@ -639,9 +639,9 @@ router.get(
 
       //const limit = (parseInt(req.query.limit as string) > 50 ? 50 : parseInt(req.query.limit as string)) || 50;
 
-      const audit_log_entries = req.guild!!.audit_logs!!;
+      const audit_log_entries = req.guild.audit_logs;
       const audit_log_user_ids: any[] = [
-        ...new Set(audit_log_entries.map((entry) => entry.user_id).filter((id) => id)),
+        ...new Set(audit_log_entries?.map((entry) => entry.user_id).filter((id) => id)),
       ]; //to-do: fix
       let audit_log_users = await AccountService.getByIds(audit_log_user_ids);
 
@@ -688,10 +688,9 @@ router.post(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const guild = req.guild!!;
+      const guild = req.guild;
 
-      if (guild!!.channels!!.length >= ctx.config!.limits['channels_per_guild'].max) {
+      if (guild.channels!!.length >= ctx.config!.limits['channels_per_guild'].max) {
         return res.status(400).json({
           code: 400,
           message: `Maximum number of channels per guild exceeded (${ctx.config!.limits['channels_per_guild'].max})`,
@@ -716,12 +715,6 @@ router.post(
       }
 
       req.body.name = req.body.name.replace(/ /g, '-');
-
-      const member = guild.members!!.find((x) => x.id === sender.id);
-
-      if (!member) {
-        return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
-      }
 
       let number_type = 0;
 
@@ -770,7 +763,7 @@ router.post(
 
       channel.type = typeof req.body.type === 'string' ? req.body.type : number_type;
 
-      await dispatcher.dispatchEventInGuild(req.guild!!.id, 'CHANNEL_CREATE', function (socket: WebSocket) {
+      await dispatcher.dispatchEventInGuild(req.guild.id, 'CHANNEL_CREATE', function (socket: WebSocket) {
         return globalUtils.personalizeChannelObject(socket, channel);
       });
 
@@ -794,7 +787,7 @@ router.patch(
   async (req: Request, res: Response) => {
     try {
       const ret: any[] = []; //to-do: fix
-      const guild = req.guild!!;
+      const guild = req.guild;
 
       for (var shit of req.body) {
         var channel_id = shit.id;
@@ -863,7 +856,7 @@ router.get(
   cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
+      const guild = req.guild;
       const webhooks = guild.webhooks;
 
       return res.status(200).json(webhooks);
@@ -901,7 +894,7 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       return res.status(200).json({
-        code: req.guild!!.vanity_url_code,
+        code: req.guild.vanity_url_code,
       });
     } catch (error) {
       logText(error, 'error');
@@ -923,7 +916,7 @@ router.patch(
         code = null;
       }
 
-      const result = await GuildService.updateGuildVanity(req.guild!!.id, code);
+      const result = await GuildService.updateGuildVanity(req.guild.id, code);
 
       if (result.error === 'VANITY_ALREADY_EXISTS') {
         return res.status(400).json({ code: 400, message: "Vanity URL is taken or invalid." });
@@ -933,7 +926,7 @@ router.patch(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      req.guild!!.vanity_url_code = code;
+      req.guild.vanity_url_code = code;
 
       return res.status(200).json({ code: result.vanity_url });
     } catch (error) {

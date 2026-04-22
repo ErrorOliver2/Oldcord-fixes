@@ -160,6 +160,11 @@ export interface Config {
             timeFrame : number;
             breakdown : number;
         };
+        bulkDeleteMessage: {
+            maxPerTimeFrame: number;
+            timeFrame: number;
+            breakdown: number;
+        }
         addDmRecipient: {
             maxPerTimeFrame: number;
             timeFrame: number;
@@ -224,6 +229,11 @@ export interface Config {
             maxPerTimeFrame : number;
             timeFrame : number;
             breakdown : number;
+        };
+        hypesquadHouseChange: {
+            maxPerTimeFrame: number;
+            timeFrame: number;
+            breakdown: number;
         };
 	    useInvite : {
             maxPerTimeFrame : number;

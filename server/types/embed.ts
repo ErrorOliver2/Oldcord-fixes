@@ -14,6 +14,8 @@ export interface EmbedFooter {
 export interface EmbedImage {
   url: string;
   proxy_url: string;
+  width?: number;
+  height?: number;
 }
 
 export interface EmbedField {

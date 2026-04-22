@@ -31,7 +31,7 @@ const permissions = {
   USE_VAD: 1 << 25,
   has(compare: string, key: string): boolean {
     try {
-      const bitmask = this[key];
+      const bitmask = (this as any)[key];
 
       if (!bitmask) return false;
 
@@ -77,7 +77,10 @@ const permissions = {
 
       if ((totalPermissions & ADMIN_BIT) === ADMIN_BIT) return true;
 
-      const permissionBit = BigInt(this.toObject()[key]);
+      const bitmask = (this as any)[key];
+      if (!bitmask) return false;
+
+      const permissionBit = BigInt(bitmask);
 
       return (totalPermissions & permissionBit) === permissionBit;
     } catch (error) {
@@ -157,7 +160,10 @@ const permissions = {
 
       if ((perms & ADMIN_BIT) === ADMIN_BIT) return true;
 
-      const bitmask = BigInt(this.toObject()[key]);
+      const bitmaskValue = (this as any)[key];
+      if (!bitmaskValue) return false;
+
+      const bitmask = BigInt(bitmaskValue);
       return (perms & bitmask) === bitmask;
     } catch (error) {
       logText(error, 'error');

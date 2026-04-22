@@ -1,5 +1,5 @@
 import { Router } from 'express';
-
+import type { WebSocket } from "ws";
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
@@ -10,6 +10,7 @@ import { prisma } from '../prisma.ts';
 import { MessageService } from './services/messageService.ts';
 import permissions from '../helpers/permissions.ts';
 import ctx from '../context.ts';
+import { GuildService } from './services/guildService.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -38,9 +39,9 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
-      const invite = req.invite!!;
-      const guild = req.guild!!;
+      const sender = req.account;
+      const invite = req.invite;
+      const guild = req.guild;
       const channel = guild.channels?.find((x) => x.id === invite.channel?.id);
 
       if (channel == null) {
@@ -48,8 +49,8 @@ router.delete(
       }
 
       const hasPermission = await permissions.hasChannelPermissionTo(
-        channel,
-        guild,
+        channel.id,
+        guild.id,
         sender.id,
         'MANAGE_CHANNELS',
       );
@@ -82,15 +83,15 @@ router.post(
   ),
   async (req: Request, res: Response) => {
     try {
-      const sender = req.account!!;
+      const sender = req.account;
 
       if (sender.bot) {
         return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT);
       }
 
-      const invite = req.invite!!;
+      const invite = req.invite;
 
-      let guild = req.guild!!;
+      let guild = req.guild;
 
       const usersGuild = await prisma.guild.count({
         where: {
@@ -165,12 +166,12 @@ router.post(
         return res.status(404).json(errors.response_404.UNKNOWN_INVITE);
       }
 
-      await dispatcher.dispatchEventTo(sender.id, 'GUILD_CREATE', PublicService.convertGuild(guild));
+      await dispatcher.dispatchEventTo(sender.id, 'GUILD_CREATE', GuildService._formatResponse(guild));
 
       await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_ADD', {
         roles: [],
         user: globalUtils.miniUserObject(sender),
-        guild_id: invite!!.guild!!.id,
+        guild_id: invite.guild.id,
         joined_at: new Date().toISOString(),
         deaf: false,
         mute: false,
@@ -182,7 +183,7 @@ router.post(
           user: globalUtils.miniUserObject(sender),
         }),
         roles: [],
-        guild_id: invite!!.guild!!.id,
+        guild_id: invite.guild.id,
       });
 
       if (guild.system_channel_id != null) {
@@ -197,7 +198,7 @@ router.post(
           guild.id,
           guild.system_channel_id,
           'MESSAGE_CREATE',
-          function (socket) {
+          function (socket: WebSocket) {
             return globalUtils.personalizeMessageObject(
               join_msg,
               guild,

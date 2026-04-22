@@ -26,14 +26,14 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
-      const roles = guild.roles!!;
+      const guild = req.guild;
+      const roles = guild.roles;
 
-      if (roles.length == 0) {
+      if (!roles || !roles.length || roles.length === 0) {
         return res.status(404).json(errors.response_404.UNKNOWN_ROLE);
       }
 
-      const role = req.role!!;
+      const role = req.role;
 
       if (req.body.name != '@everyone' && req.params.roleid == req.params.guildid) {
         return res.status(403).json({
@@ -92,10 +92,10 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
-      const role = req.role!!;
+      const guild = req.guild;
+      const role = req.role;
 
-      const members_with_role = guild.members?.filter((x) => x.roles!!.some((y) => y === role.id));
+      const members_with_role = guild.members?.filter((x) => x.roles.some((y) => y === role.id));
       const attempt = await RoleService.deleteRole(req.params.roleid as string);
 
       if (!attempt) {
@@ -107,15 +107,15 @@ router.delete(
         role_id: req.params.roleid,
       });
 
-      if (members_with_role!!.length > 0) {
+      if (members_with_role!.length > 0) {
         for (var member_with_role of members_with_role!!) {
           let member_with_roles = member_with_role.roles;
 
-          member_with_roles = member_with_roles!!.filter((x) => x !== role.id);
+          member_with_roles = member_with_roles.filter((x) => x !== role.id);
 
           await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_UPDATE', {
             roles: member_with_roles,
-            user: globalUtils.miniUserObject(member_with_role!!.user as User),
+            user: globalUtils.miniUserObject(member_with_role.user as User),
             guild_id: guild.id,
             nick: member_with_role.nick,
           });
@@ -140,7 +140,7 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
+      const guild = req.guild;
       const roles = req.body;
 
       if (!Array.isArray(roles)) {
@@ -199,9 +199,9 @@ router.post(
   ),
   async (req: Request, res: Response) => {
     try {
-      const guild = req.guild!!;
+      const guild = req.guild;
 
-      if (guild.roles!!.length >= ctx.config!.limits['roles_per_guild'].max) {
+      if (guild.roles!.length >= ctx.config!.limits['roles_per_guild'].max) {
         return res.status(400).json({
           code: 400,
           message: `Maximum number of roles per guild exceeded (${ctx.config!.limits['roles_per_guild'].max})`,

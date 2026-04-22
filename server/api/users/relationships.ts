@@ -20,9 +20,9 @@ router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Reques
       return res.status(403).json(errors.response_403.BOTS_CANNOT_USE_THIS_ENDPOINT); //bots.. ermm
     }
 
-    const relationships = 
-
-    return res.status(200).json(account.relationships ?? []);
+    const relationships = await RelationshipService.getRelationshipsByUserId(account.id);
+    
+    return res.status(200).json(relationships ?? []);
   } catch (error) {
     logText(error, 'error');
 
@@ -32,13 +32,13 @@ router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Reques
 
 router.delete('/:userid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
 
     if (account.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_HAVE_FRIENDS); //bots cannot add users
     }
 
-    const user = req.user!!;
+    const user = req.user;
 
     if (user.bot) {
       return res.status(403).json(errors.response_403.BOTS_CANNOT_HAVE_FRIENDS); //bots cannot add users
@@ -48,7 +48,8 @@ router.delete('/:userid', async (req: Request, res: Response) => {
       return res.status(403).json(errors.response_403.CANNOT_FRIEND_SELF);
     }
 
-    const relationship = account.relationships.find((item) => item.id === user.id);
+    const relationships = await RelationshipService.getRelationshipsByUserId(account.id);
+    const relationship = relationships.find((item) => item.id === user.id);
 
     if (!relationship) {
       return res.status(404).json(errors.response_404.UNKNOWN_USER); //relationship was not found, is this the correct response?
@@ -65,9 +66,9 @@ router.delete('/:userid', async (req: Request, res: Response) => {
       });
     }
 
-    relationship.type = 0; //this happens in all cases
+    relationship.type = RelationshipType.NONE; //this happens in all cases
 
-    await RelationshipService.modifyRelationship(account.id, relationship.id, 0);
+    await RelationshipService.modifyRelationship(account.id, relationship.id, RelationshipType.NONE);
 
     return res.status(204).send();
   } catch (error) {
@@ -79,8 +80,8 @@ router.delete('/:userid', async (req: Request, res: Response) => {
 
 router.put('/:userid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
-    const user = req.user!!;
+    const account = req.account;
+    const user = req.user;
     const bodyType = req.body.type;
 
     if (account.bot || user.bot) {
@@ -91,7 +92,8 @@ router.put('/:userid', async (req: Request, res: Response) => {
       return res.status(403).json(errors.response_403.CANNOT_FRIEND_SELF);
     }
 
-    const relationship = account.relationships.find((item) => item.id === user.id);
+    const relationships = await RelationshipService.getRelationshipsByUserId(account.id);
+    const relationship = relationships.find((item) => item.id === user.id);
 
     if (bodyType === RelationshipType.BLOCKED) {
       if (relationship?.type === RelationshipType.FRIEND) {
@@ -125,7 +127,7 @@ router.put('/:userid', async (req: Request, res: Response) => {
       return res.status(204).send();
     }
 
-    await RelationshipService.handleFriendRequest(account, user);
+    await RelationshipService.handleFriendRequest(account.id, user.id);
 
     return res.status(204).send();
   } catch (error) {
@@ -137,7 +139,7 @@ router.put('/:userid', async (req: Request, res: Response) => {
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const { email, username, discriminator } = req.body;
 
     if (account.bot) {

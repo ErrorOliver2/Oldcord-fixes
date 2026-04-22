@@ -287,17 +287,17 @@ async function assetsMiddleware(req: Request, res: Response) {
 function staffAccessMiddleware(privilege_needed: number) {
   return async function (req: Request, res: Response, next: NextFunction) {
     try {
-      const account = req.account!!;
+      const account = req.account;
 
       if (!req.is_staff) {
         return res.status(401).json(errors.response_401.UNAUTHORIZED);
       }
 
-      if (req.staff_details!!.privilege < privilege_needed) {
+      if (req.staff_details.privilege < privilege_needed) {
         return res.status(401).json(errors.response_401.UNAUTHORIZED);
       }
 
-      if (!account.mfa_enabled && ctx.config?.mfa_required_for_admin) {
+      if (!account.mfa_enabled && ctx.config?.instance.flags.includes("MFA_FOR_ADMIN")) {
         if (req.method === 'GET' && req.url.endsWith('/@me')) {
           return next();
         } //Exclude from the admin info get request
@@ -454,7 +454,7 @@ async function guildMiddleware(req: Request, res: Response, next: NextFunction) 
  */
 
 async function userMiddleware(req: Request, res: Response, next: NextFunction) {
-  const account = req.account!!;
+  const account = req.account;
   const user = req.user;
 
   if (!user) {
@@ -574,7 +574,7 @@ async function channelMiddleware(req: Request, res: Response, next: NextFunction
 
 function guildPermissionsMiddleware(permission: string) {
   return async function (req: Request, res: Response, next: NextFunction) {
-    const sender = req.account!!;
+    const sender = req.account;
 
     if (!req.params.guildid) {
       return next();
@@ -587,7 +587,7 @@ function guildPermissionsMiddleware(permission: string) {
     }
 
     if (guild.owner_id == sender.id || (req.is_staff && req.staff_details && req.staff_details.privilege >= 3)) {
-      if (!sender.mfa_enabled && ctx.config?.mfa_required_for_admin && req.is_staff) {
+      if (!sender.mfa_enabled && ctx.config?.instance.flags.includes("MFA_FOR_ADMIN") && req.is_staff) {
         return res.status(403).json(errors.response_403.MFA_REQUIRED);
       }
 
@@ -633,7 +633,7 @@ function cacheForMiddleware(maxAge: number, mode = "private", immutable = false)
 
 function channelPermissionsMiddleware(permission: string) {
   return async function (req: Request, res: Response, next: NextFunction) {
-    const sender = req.account!!;
+    const sender = req.account;
 
     if (permission == 'MANAGE_MESSAGES' && req.params.messageid) {
       const message = req.message;
@@ -643,7 +643,7 @@ function channelPermissionsMiddleware(permission: string) {
       }
 
       if (req.is_staff && req.staff_details && req.staff_details.privilege >= 3) {
-        if (!sender.mfa_enabled && ctx.config?.mfa_required_for_admin) {
+        if (!sender.mfa_enabled && ctx.config?.instance.flags.includes("MFA_FOR_ADMIN")) {
           return res.status(403).json(errors.response_403.MFA_REQUIRED);
         }
 
@@ -662,7 +662,7 @@ function channelPermissionsMiddleware(permission: string) {
     }
 
     if (req.is_staff && req.staff_details && req.staff_details.privilege >= 3) {
-      if (!sender.mfa_enabled && ctx.config?.mfa_required_for_admin) {
+      if (!sender.mfa_enabled && ctx.config?.instance.flags.includes("MFA_FOR_ADMIN")) {
         return res.status(403).json(errors.response_403.MFA_REQUIRED);
       }
 
@@ -722,7 +722,7 @@ function channelPermissionsMiddleware(permission: string) {
               return senderAllows && recipientAllows;
             });
 
-            if (!hasAllowedGuild || ctx.config?.require_friendship_for_dm) {
+            if (!hasAllowedGuild || ctx.config?.instance.flags.includes("FRIENDSHIP_FOR_DM")) {
               return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
             }
           }
@@ -738,8 +738,8 @@ function channelPermissionsMiddleware(permission: string) {
     }
 
     const check = await permissions.hasChannelPermissionTo(
-      channel,
-      req.guild,
+      channel.id,
+      req.guild.id,
       sender.id,
       permission,
     );

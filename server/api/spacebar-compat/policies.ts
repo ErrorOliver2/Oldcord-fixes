@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import { config, generateGatewayURL } from '../../helpers/globalutils.js';
 import type { SpacebarInstanceDomains } from '../../types/spacebar.ts';
 import type { SpacebarInstanceConfig } from '../../types/spacebar.ts';
+import ctx from '../../context.ts';
 
 const router = Router();
 

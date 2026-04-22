@@ -27,7 +27,7 @@ router.patch(
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const webhook = req.webhook!!;
+      const webhook = req.webhook;
       const newName = req.body.name;
 
       if (!newName) {
@@ -71,7 +71,7 @@ router.delete(
   guildPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
-      const webhook = req.webhook!!;
+      const webhook = req.webhook;
 
       await WebhookService.deleteWebhook(webhook.id);
 
@@ -86,7 +86,7 @@ router.delete(
 
 router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => {
   try {
-    const webhook = req.webhook!!;
+    const webhook = req.webhook;
 
     const guild = await GuildService.getById(webhook.guild_id);
     const channel = await ChannelService.getChannelById(webhook.channel_id); //to-do: this better
@@ -150,7 +150,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
     };
 
     if (Array.isArray(req.body.embeds)) {
-      embeds = req.body.embeds.slice(0, MAX_EMBEDS).map((embed) => {
+      embeds = req.body.embeds.slice(0, MAX_EMBEDS).map((embed: Embed) => {
         const embedObj: Embed = {
           type: 'rich',
           color: embed.color ?? 7506394,
@@ -162,7 +162,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
         if (embed.timestamp) embedObj.timestamp = embed.timestamp;
 
         if (embed.author) {
-          const icon = proxyUrl(embed.author.icon_url);
+          const icon = proxyUrl(embed.author.icon_url!!);
 
           embedObj.author = {
             name: embed.author.name ?? null,
@@ -192,7 +192,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
         }
 
         if (embed.footer) {
-          const footerIcon = proxyUrl(embed.footer.icon_url);
+          const footerIcon = proxyUrl(embed.footer.icon_url!!);
 
           embedObj.footer = {
             text: embed.footer.text ?? null,
@@ -215,7 +215,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
 
     const createMessage = await MessageService.createMessage(
       !channel!.guild_id ? null : channel!.guild_id,
-      channel!!.id,
+      channel!.id,
       create_override ? `WEBHOOK_${webhook.id}_${override_id}` : `WEBHOOK_${webhook.id}`,
       req.body.content,
       req.body.nonce,
@@ -245,7 +245,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
       createMessage.author.avatar = override.avatar_url;
     }
 
-    await dispatcher.dispatchEventInChannel(guild.id, channel!!.id, 'MESSAGE_CREATE', createMessage);
+    await dispatcher.dispatchEventInChannel(guild.id, channel!.id, 'MESSAGE_CREATE', createMessage);
 
     return res.status(204).send();
   } catch (error) {
@@ -257,7 +257,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
 
 router.post('/:webhookid/:webhooktoken/github', async (req: Request, res: Response) => {
   try {
-    const webhook = req.webhook!!;
+    const webhook = req.webhook;
     const channel = await ChannelService.getChannelById(webhook.channel_id);
 
     if (!channel) {

@@ -14,7 +14,7 @@ export const ChannelService = {
         if (channel.guild_id === null) {
             const privChannel: Channel = {
                 id: channel.id,
-                type: channel.type!!,
+                type: channel.type,
                 last_message_id: channel.last_message_id ?? '0',
             };
 
@@ -40,9 +40,9 @@ export const ChannelService = {
                     const recipientIds = Array.isArray(groupInfo.recipients) ? groupInfo.recipients as string[] : JSON.parse(groupInfo.recipients as string);
                     const rawAccounts = await AccountService.getByIds(recipientIds);
 
-                    privChannel.icon = groupInfo.icon!!;
+                    privChannel.icon = groupInfo.icon;
                     privChannel.name = groupInfo.name!!;
-                    privChannel.owner_id = groupInfo.owner_id!!;
+                    privChannel.owner_id = groupInfo.owner_id;
                     privChannel.recipients = rawAccounts.map(u => globalUtils.miniUserObject(u));
                 }
             }

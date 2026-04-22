@@ -15,30 +15,30 @@ declare global {
   namespace Express {
     interface Request {
       client_build: string;
-      account?: Account | null;
-      member?: Member | null;
-      role?: Role | null;
-      application?: any;
-      fingerprint?: string;
-      is_staff?: boolean;
-      apiVersion?: number;
-      rateLimit?: any;
-      subscription?: any;
-      invite?: Invite;
-      client_build_date?: Date;
-      staff_details?: StaffDetails; 
-      user_staff_details?: StaffDetails;
-      channel_types_are_ints?: boolean;
-      cannot_pass?: boolean;
-      files?: any[];
-      is_staff?: boolean;
-      is_user_staff?: boolean;
-      guild?: Guild | null;
-      recipient?: User | null;
-      user?: Account | null; //Would use User here but Accounts have relationships attached to them, which we may need in further logic.
-      channel?: Channel | null;
-      webhook?: Webhook | null;
-      message?: Message | null;
+      account: Account;
+      member: Member;
+      role: Role;
+      application: any;
+      fingerprint: string;
+      is_staff: boolean;
+      apiVersion: number;
+      rateLimit: any;
+      subscription: any;
+      invite: Invite;
+      client_build_date: Date;
+      staff_details: StaffDetails; 
+      user_staff_details: StaffDetails;
+      channel_types_are_ints: boolean;
+      cannot_pass: boolean;
+      files: Express.Multer.File[];
+      is_staff: boolean;
+      is_user_staff: boolean;
+      guild: Guild;
+      recipient: User;
+      user: Account; //Would use User here but Accounts have relationships attached to them, which we may need in further logic.
+      channel: Channel;
+      webhook: Webhook;
+      message: Message;
       plural_recipients: User[];
     }
     interface Response {

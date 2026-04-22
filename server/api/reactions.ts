@@ -9,6 +9,7 @@ import { ChannelType } from '../types/channel.ts';
 import permissions from '../helpers/permissions.ts';
 import { prisma } from '../prisma.ts';
 import ctx from '../context.ts';
+import { PUBLIC_USER_SELECT } from './services/accountService.ts';
 
 const router = Router({ mergeParams: false });
 
@@ -20,15 +21,15 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const account = req.account!!;
-      const channel = req.channel!!;
-      const guild = req.guild!!;
+      const account = req.account;
+      const channel = req.channel;
+      const guild = req.guild;
 
       if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const message = req.message!!;
+      const message = req.message;
 
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
@@ -70,7 +71,7 @@ router.delete(
 
       if (guild)
         await dispatcher.dispatchEventInChannel(
-          req.guild!!.id,
+          req.guild.id,
           channel.id,
           'MESSAGE_REACTION_REMOVE',
           payload,
@@ -96,15 +97,15 @@ router.delete(
   ),
   async (req: Request, res: Response) => {
     try {
-      const user = req.user!!;
-      const channel = req.channel!!;
+      const user = req.user;
+      const channel = req.channel;
       const guild = req.guild;
 
       if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const message = req.message!!;
+      const message = req.message;
 
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
@@ -146,7 +147,7 @@ router.delete(
 
       if (guild)
         await dispatcher.dispatchEventInChannel(
-          req.guild!!.id,
+          req.guild.id,
           channel.id,
           'MESSAGE_REACTION_REMOVE',
           payload,
@@ -171,15 +172,15 @@ router.put(
   ),
   async (req: Request, res: Response) => {
     try {
-      const account = req.account!!;
-      const channel = req.channel!!;
-      const guild = req.guild!!;
+      const account = req.account;
+      const channel = req.channel;
+      const guild = req.guild;
 
       if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
         return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
       }
 
-      const message = req.message!!;
+      const message = req.message;
 
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
@@ -215,9 +216,9 @@ router.put(
 
       if (!reactionExists) {
         const canAdd = await permissions.hasChannelPermissionTo(
-          req.channel,
-          req.guild,
-          req.account!!.id,
+          req.channel.id,
+          req.guild.id,
+          req.account.id,
           'ADD_REACTIONS',
         );
 
@@ -244,7 +245,7 @@ router.put(
 
       if (guild)
         await dispatcher.dispatchEventInChannel(
-          req.guild!!.id,
+          req.guild.id,
           channel.id,
           'MESSAGE_REACTION_ADD',
           payload,
@@ -262,14 +263,14 @@ router.put(
 
 router.get('/:urlencoded', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const channel = req.channel!!;
-    const guild = req.guild!!;
+    const channel = req.channel;
+    const guild = req.guild;
 
     if (channel.type != ChannelType.DM && channel.type != ChannelType.GROUPDM && !guild) {
       return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
     }
 
-    const message = req.message!!;
+    const message = req.message;
 
     if (guild && guild.exclusions?.includes('reactions')) {
       return res.status(400).json({
@@ -296,25 +297,16 @@ router.get('/:urlencoded', cacheForMiddleware(60 * 5, "private", false), async (
     }
 
     const reactions = message.reactions!!;
-
-    const filteredReactions = reactions.filter(
+    const filteredReactions = reactions?.filter(
       (x) => x.emoji.name == dispatch_name && x.emoji.id == id,
     );
 
-    const userIds = [...new Set(filteredReactions.map(r => r.user_id))];
-
+    const userIds = [...new Set(filteredReactions!!.map(r => r.user_id!!))];
     const users = await prisma.user.findMany({
       where: {
         id: { in: userIds }
       },
-      select: {
-        id: true,
-        username: true,
-        discriminator: true,
-        avatar: true,
-        bot: true,
-        premium: true
-      }
+      select: PUBLIC_USER_SELECT
     });
 
     const return_users = users.map(u => ({
@@ -323,7 +315,7 @@ router.get('/:urlencoded', cacheForMiddleware(60 * 5, "private", false), async (
       discriminator: u.discriminator,
       avatar: u.avatar,
       bot: u.bot ?? false,
-      premium: u.premium ?? false
+      premium: false
     }));
 
     return res.status(200).json(return_users);

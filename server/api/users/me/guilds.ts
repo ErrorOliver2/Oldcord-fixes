@@ -22,8 +22,8 @@ router.delete(
   async (req: Request, res: Response) => {
     try {
       try {
-        const user = req.account!!;
-        const guild = req.guild!!;
+        const user = req.account;
+        const guild = req.guild;
 
         if (guild.owner_id == user.id) {
           await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_DELETE', {
@@ -82,17 +82,16 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      const user = req.account!!;
-      const guild = req.guild!!;
+      const user = req.account;
+      const guild = req.guild;
 
       const userData = await prisma.user.findUnique({
         where: { id: user.id },
         select: { guild_settings: true }
       });
 
-      //Move this to use GuildSettings.
       let allSettings = (userData?.guild_settings as any[]) || [];
-      let guildSettings = allSettings.find((x) => x.guild_id === guild.id);
+      let guildSettings = allSettings.find((x: any) => x.guild_id === guild.id);
 
       if (!guildSettings) {
         guildSettings = {
@@ -115,9 +114,11 @@ router.patch(
       });
 
       if (req.body.channel_overrides) {
-        if (!Array.isArray(guildSettings.channel_overrides)) guildSettings.channel_overrides = [];
+        if (!Array.isArray(guildSettings.channel_overrides)) {
+          guildSettings.channel_overrides = [];
+        }
 
-        for (const [id, override] of Object.entries(req.body.channel_overrides as any) as any) {
+        for (const [id, override] of Object.entries(req.body.channel_overrides) as [string, any][]) {
           let channelObj = guildSettings.channel_overrides.find((x: any) => x.channel_id === id);
 
           if (!channelObj) {
@@ -126,7 +127,7 @@ router.patch(
           }
 
           if (override.muted !== undefined) channelObj.muted = override.muted;
-          if (override.message_notifications !== undefined) 
+          if (override.message_notifications !== undefined)
             channelObj.message_notifications = override.message_notifications;
         }
       }
@@ -154,7 +155,7 @@ router.get('/premium/subscriptions', cacheForMiddleware(60 * 5, "private", false
     return res.status(200).json([]);
   }
 
-  const account = req.account!!;
+  const account = req.account;
   const subscriptions = await prisma.guildSubscription.findMany({
       where: { user_id: account.id },
       select: {

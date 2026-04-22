@@ -94,7 +94,7 @@ export const AuthService = {
                 await GuildService.addMember(newUser.id, guildId);
             }
 
-            return newUser.token!!;
+            return newUser.token;
         }
         catch (error) {
             logText(error, 'error');

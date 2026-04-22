@@ -32,7 +32,7 @@ router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Reques
     const { 
       id, username, discriminator, email, verified, 
       avatar, bot, created_at, flags, premium 
-    } = req.account!!;
+    } = req.account;
 
     const userProfile = {
       id,
@@ -67,7 +67,7 @@ router.patch(
   ),
   async (req: Request, res: Response) => {
     try {
-      let account = req.account!!;
+      let account = req.account;
       const originalAcc = account;
 
       if (account.bot) {
@@ -383,14 +383,12 @@ router.patch(
 
       account = new_account as Account;
 
-      account = globalUtils.sanitizeObject(account, [
-        'settings',
-        'created_at',
-        'password',
-        'relationships',
-        'disabled_until',
-        'disabled_reason',
-      ]);
+      account['settings'] = undefined;
+      account['token'] = undefined;
+      account['password'] = undefined;
+      account['disabled_until'] = undefined;
+      account['disabled_reason'] = undefined;
+      account['created_at'] = undefined;
 
       if (originalAcc.email != account.email) {
         account.verified = false;
@@ -441,7 +439,7 @@ router.patch(
 //Or this
 router.get('/settings', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
 
     return res.status(200).json(account.settings);
   } catch (error) {
@@ -453,7 +451,7 @@ router.get('/settings', cacheForMiddleware(60 * 5, "private", false), async (req
 
 router.patch('/settings', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const new_settings = account.settings as any;
 
     if (new_settings == null) {
@@ -541,8 +539,8 @@ router.patch(/\/settings-proto\/.*/, async (_req: Request, res: Response) => {
 
 router.put('/notes/:userid', async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
-    const user = req.user!!;
+    const account = req.account;
+    const user = req.user;
 
     const noteInput = req.body.note;
     const new_notes = (noteInput && noteInput.trim().length > 0) ? noteInput : null;
@@ -588,7 +586,7 @@ router.put('/notes/:userid', async (req: Request, res: Response) => {
 
 router.get('/mentions', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
-    const account = req.account!!;
+    const account = req.account;
     const limit = parseInt(req.query.limit as string) ?? 25;
     const guild_id = req.query.guild_id;
     const include_roles = (req.query.roles ?? "") === 'true';
@@ -672,7 +670,7 @@ router.post(
     try {
       const code = req.body.code;
       const secret = req.body.secret;
-      const account = req.account!!;
+      const account = req.account;
 
       if (!code || !secret) {
         return res.status(400).json({
@@ -725,19 +723,16 @@ router.post(
         }
       });
 
-      const returnedObj = globalUtils.sanitizeObject(account, [
-        'settings',
-        'token',
-        'password',
-        'disabled_until',
-        'disabled_reason',
-        'relationships',
-        'created_at',
-      ]);
+      account['settings'] = undefined;
+      account['token'] = undefined;
+      account['password'] = undefined;
+      account['disabled_until'] = undefined;
+      account['disabled_reason'] = undefined;
+      account['created_at'] = undefined;
 
-      returnedObj.mfa_enabled = true;
+      account.mfa_enabled = true;
 
-      await dispatcher.dispatchEventTo(account.id, 'USER_UPDATE', returnedObj);
+      await dispatcher.dispatchEventTo(account.id, 'USER_UPDATE', account);
 
       return res.status(200).json({
         token: req.headers['authorization'],
@@ -765,7 +760,7 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const code = req.body.code;
-      const account = req.account!!;
+      const account = req.account;
 
       if (!code) {
         return res.status(400).json({
@@ -818,21 +813,18 @@ router.post(
         }
       });
 
-      const returnedObj = globalUtils.sanitizeObject(account, [
-        'settings',
-        'token',
-        'password',
-        'disabled_until',
-        'disabled_reason',
-        'relationships',
-        'created_at',
-      ]);
+      account['settings'] = undefined;
+      account['token'] = undefined;
+      account['password'] = undefined;
+      account['disabled_until'] = undefined;
+      account['disabled_reason'] = undefined;
+      account['created_at'] = undefined;
 
-      returnedObj.mfa_enabled = false;
+      account.mfa_enabled = false;
 
-      await dispatcher.dispatchEventTo(account.id, 'USER_UPDATE', returnedObj);
+      await dispatcher.dispatchEventTo(account.id, 'USER_UPDATE', account);
 
-      return res.status(200).json(returnedObj);
+      return res.status(200).json(account);
     } catch (error) {
       logText(error, 'error');
 
