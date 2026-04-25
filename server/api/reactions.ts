@@ -29,8 +29,6 @@ router.delete(
 
       const message = req.message;
 
-        console.log(message);
-
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
           code: 400,
@@ -180,8 +178,6 @@ router.put(
       }
 
       const message = req.message;
-
-      console.log(message);
 
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({

@@ -10,8 +10,6 @@ import ctx from "../../context.ts";
 
 export const MessageService = {
     formatMessage: (row: any, author: any, mentions: any, mention_roles: any, reactions: any, isWebhook: boolean): Message => {
-        console.log(row.attachments);
-
         return {
             type: row.type, //8 = boost, 9 = boosted server, guild has reached level 1, 10 = level 2, 11 = level 3 (12 = i have added what a bla bla to this channel?)
             guild_id: row.guild_id, //Is this necessary here?

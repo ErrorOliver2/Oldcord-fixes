@@ -260,7 +260,6 @@ export const GuildService = {
         });
 
         if (!guild) {
-             console.log("wtf 26666 " + guildId);
             throw { status: 404, error: 'UNKNOWN_GUILD' };
         }
 

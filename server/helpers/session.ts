@@ -574,8 +574,6 @@ class session implements Session {
 
           merged_members.push(...formattedMembers);
 
-          console.log(guild);
-          console.log(guild.channels);
           for (let channel of guild.channels!!) {
             if ((year === 2017 && month < 9) || year < 2017) {
               if (channel.type === ChannelType.CATEGORY) {
