@@ -4,8 +4,9 @@ import { load } from 'cheerio';
 import { Jimp } from 'jimp';
 
 import { logText } from './logger.ts';
+import ctx from '../context.ts';
 
-const hexToDecimal = (hex) => {
+const hexToDecimal = (hex: string) => {
   if (hex.startsWith('#')) {
     hex = hex.slice(1);
   }
@@ -239,7 +240,7 @@ const embedder = {
       }
     }
 
-    if (!ctx.config!.auto_embed_urls) {
+    if (!ctx.config!.instance.flags.includes("EMBED_URLS")) {
       return ret;
     }
 

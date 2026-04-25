@@ -16,9 +16,7 @@ let erlpack: typeof import('erlpack') | null = null;
 
 try {
   erlpack = await import('erlpack');
-} catch {
-  logText('erlpack is not installed.', 'warning');
-}
+} catch { }
 
 const FastDeflation = false;
 const DeflationSettings = {

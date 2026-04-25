@@ -7,6 +7,7 @@ import errors from '../../helpers/errors.ts';
 import { prisma } from '../../prisma.ts';
 import { OAuthService } from '../services/oauthService.ts';
 import { UploadService } from '../services/uploadService.ts';
+import { applicationMiddleware } from '../../helpers/middlewares.ts';
 
 router.get('/', async (req: Request, res: Response) => {
   const account = req.account;
@@ -48,7 +49,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/:applicationid', async (req: Request, res: Response) => {
+router.get('/:applicationid', applicationMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
 
@@ -68,7 +69,7 @@ router.get('/:applicationid', async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/:applicationid', async (req: Request, res) => {
+router.patch('/:applicationid', applicationMiddleware, async (req: Request, res) => {
   const { application } = req;
   const account = req.account;
 
@@ -129,7 +130,7 @@ router.patch('/:applicationid', async (req: Request, res) => {
 });
 
 //I don't know if this is even necessary, yolo
-router.delete('/:applicationid', async (req: Request, res: Response) => {
+router.delete('/:applicationid', applicationMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const application = req.application;
@@ -148,7 +149,7 @@ router.delete('/:applicationid', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/:applicationid/bot', async (req: Request, res: Response) => {
+router.post('/:applicationid/bot', applicationMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const application = req.application;
@@ -174,7 +175,7 @@ router.post('/:applicationid/bot', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/:applicationid/delete', async (req: Request, res: Response) => {
+router.post('/:applicationid/delete', applicationMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const application = req.application;

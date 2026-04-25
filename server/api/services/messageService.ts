@@ -1,5 +1,5 @@
 import { logText } from "../../helpers/logger.ts";
-import globalUtils, { formatMessage, parseMentions } from "../../helpers/globalutils.ts";
+import globalUtils, { parseMentions } from "../../helpers/globalutils.ts";
 import { prisma } from "../../prisma.ts";
 import { AccountService } from "./accountService.ts";
 import { deconstruct, generate } from "../../helpers/snowflake.ts";
@@ -9,6 +9,41 @@ import type { User } from "../../types/user.ts";
 import ctx from "../../context.ts";
 
 export const MessageService = {
+    formatMessage: (row: any, author: any, mentions: any, mention_roles: any, reactions: any, isWebhook: boolean): Message => {
+        console.log(row.attachments);
+
+        return {
+            type: row.type, //8 = boost, 9 = boosted server, guild has reached level 1, 10 = level 2, 11 = level 3 (12 = i have added what a bla bla to this channel?)
+            guild_id: row.guild_id, //Is this necessary here?
+            id: row.message_id,
+            content: row.content,
+            channel_id: row.channel_id,
+            author: globalUtils.miniUserObject(author),
+            attachments: row.attachments.map((attachment: any) => {
+                return {
+                    id: attachment.attachment_id,
+                    filename: attachment.filename,
+                    height: attachment.height,
+                    width: attachment.width,
+                    size: attachment.size,
+                    proxy_url: attachment.url,
+                    url: attachment.url
+                }
+            }) || [],
+            embeds: row.embeds == null ? [] : JSON.parse(row.embeds),
+            mentions: mentions,
+            mention_everyone: row.mention_everyone,
+            mention_roles: mention_roles,
+            nonce: row.nonce,
+            edited_timestamp: row.edited_timestamp,
+            timestamp: row.timestamp,
+            reactions: reactions,
+            tts: row.tts,
+            pinned: row.pinned,
+            //overrides: (!row.overrides ? [] : JSON.parse(row.overrides)), - what is this even for?
+            ...(isWebhook && { webhook_id: row.author_id.split('_')[1] }),
+        };
+    },
     async _formatMessageBatch(messages: any[], requesterId?: string, includeReactions: boolean = true): Promise<Message[]> {
         if (!messages.length) return [];
 
@@ -54,10 +89,9 @@ export const MessageService = {
 
             const author = msg.author ? globalUtils.miniUserObject(msg.author as User) : { id: msg.author_id, username: 'Unknown User', discriminator: '0000', bot: false };
 
-            return formatMessage(
+            return this.formatMessage(
                 msg,
                 author,
-                msg.attachments,
                 mentions,
                 mention_roles,
                 reactions,
@@ -72,7 +106,7 @@ export const MessageService = {
                 where: { message_id: id },
                 include: {
                     attachments: true,
-                    author: true,
+                    author: true
                 }
             });
 
@@ -131,10 +165,9 @@ export const MessageService = {
                 ? JSON.parse(message.reactions) 
                 : (message.reactions || []);
 
-            return formatMessage(
+            return this.formatMessage(
                 message,
                 author,
-                message.attachments,
                 mentions,
                 mentionsData.mention_roles,
                 reactions,
@@ -173,7 +206,7 @@ export const MessageService = {
                 ? JSON.parse(message.reactions) 
                 : (message.reactions || []);
 
-            return formatMessage(message, message.author, message.attachments, mentions, mentionsData.mention_roles, reactions, !!message.author_id?.includes('WEBHOOK_'))
+            return this.formatMessage(message, message.author, mentions, mentionsData.mention_roles, reactions, !!message.author_id?.includes('WEBHOOK_'))
         }
         catch (error) {
             logText(error, 'error');
@@ -311,10 +344,9 @@ export const MessageService = {
                 const isWebhook = !!msg.author_id?.startsWith('WEBHOOK_');
 
                 finalMessages.push(
-                    formatMessage(
+                    this.formatMessage(
                         msg,
                         globalUtils.miniUserObject(authorObject),
-                        msg.attachments,
                         mentions,
                         mention_roles,
                         [],
@@ -493,10 +525,9 @@ export const MessageService = {
             const mentionAccounts = await AccountService.getByIds(mentionsData.mentions || []);
             const mentions = mentionAccounts.map(acc => globalUtils.miniUserObject(acc));
 
-            const formattedMsg = formatMessage(
+            const formattedMsg = this.formatMessage(
                 createdMessage,
                 author,
-                createdMessage.attachments,
                 mentions,
                 mentionsData.mention_roles,
                 [],

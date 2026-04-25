@@ -11,6 +11,13 @@ import type { Account } from '../types/account.ts';
 import { GuildService } from '../api/services/guildService.ts';
 import ctx from '../context.ts';
 import permissions from './permissions.ts';
+import type { Config } from '../types/config.ts';
+import { ChannelService } from '../api/services/channelService.ts';
+import { ChannelType } from '../types/channel.ts';
+import { MessageService } from '../api/services/messageService.ts';
+import { InviteService } from '../api/services/inviteService.ts';
+import { OAuthService } from '../api/services/oauthService.ts';
+import { WebhookService } from '../api/services/webhookService.ts';
 
 const config = globalUtils.config;
 const spacebarApis = ['/.well-known/spacebar', '/policies/instance/domains'];
@@ -127,8 +134,7 @@ async function clientMiddleware(req: Request, res: Response, next: NextFunction)
     cookies = req.cookies;
 
     if (!globalUtils.addClientCapabilities(cookies['release_date'], req)) {
-      logText('failed to add', 'error');
-      console.log("xxx 4");
+      logText('failed to add release_date client capabilities', 'error');
       return res.redirect('/selector');
     }
 
@@ -147,34 +153,40 @@ async function clientMiddleware(req: Request, res: Response, next: NextFunction)
  * @param ignore_trusted There is a trusted list of user IDs which are exempt from ratelimits usually. This will control whether it ignores them from being ratelimited (true) or not. (false)
  */
 
-function rateLimitMiddleware(max: number, windowMs: number, ignore_trusted = true) {
-  const rL = rateLimit({
-    windowMs: windowMs,
-    max: max,
-    handler: (req: Request, res: Response, next: NextFunction) => {
-      if (!config.ratelimit_config.enabled) {
-        return next();
-      }
+type RatelimitCategory = keyof Omit<Config['ratelimit_config'], 'enabled'>;
 
-      if (ignore_trusted && req.account && config.trusted_users.includes(req.account.id)) {
-        return next();
-      }
+function rateLimitMiddleware(timeframe: RatelimitCategory, ignore_trusted = true) {
+  return function (req: Request, res: Response, next: NextFunction) {
+    if (!ctx.config || !ctx.config.ratelimit_config) {
+      return next();
+    }
 
-      const retryAfter = Math.ceil(req.rateLimit.resetTime.getTime() - Date.now());
+    const ratelimitConfig = ctx.config.ratelimit_config;
+    const entry = ratelimitConfig[timeframe];
 
-      res.status(429).json({
-        ...errors.response_429.RATE_LIMITED,
-        retry_after: retryAfter,
-        global: true,
-      });
-    },
-  });
+    if (!ratelimitConfig.enabled || !entry) {
+      return next();
+    }
 
-  return function (req: Request, res: Response, next: any) {
-    rL(req, res, (err) => {
-      if (err) return next(err);
-      next();
+    const rL = rateLimit({
+      windowMs: entry.timeFrame,
+      max: entry.maxPerTimeFrame,
+      handler: (req: Request, res: Response) => {
+        if (ignore_trusted && req.account && ctx.config!.trusted_users.includes(req.account.id)) {
+          return next();
+        }
+
+        const retryAfter = Math.ceil(req.rateLimit.resetTime.getTime() - Date.now());
+
+        res.status(429).json({
+          ...errors.response_429.RATE_LIMITED,
+          retry_after: retryAfter,
+          global: true,
+        });
+      },
     });
+
+    return rL(req, res, next);
   };
 }
 
@@ -420,48 +432,100 @@ function instanceMiddleware(flag_check: string) {
  */
 
 async function guildMiddleware(req: Request, res: Response, next: NextFunction) {
-  if (!req.params.guildid) {
-    return next();
+  const { guildid } = req.params;
+
+  if (guildid) {
+    const guild = await GuildService.getById(guildid as string);
+
+    if (!guild) {
+      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
+    }
+
+    req.guild = guild;
+
+    if (req.is_staff) {
+      return next();
+    }
+
+    const member = guild.members?.find((y) => y.id == req.account.id);
+
+    if (!member) {
+      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
+    }
   }
-
-  const guild = req.guild;
-
-  if (!guild) {
-    return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-  }
-
-  const sender = req.account;
-
-  if (sender == null) {
-    return res.status(401).json(errors.response_401.UNAUTHORIZED);
-  }
-
-  if (req.is_staff) {
-    return next();
-  }
-
-  const member = guild.members?.find((y) => y.id == sender.id);
-
-  if (!member) {
-    return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-  }
-
-  next();
+  
+  return next();
 }
 
+async function subscriptionMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { subscriptionid } = req.params;
+
+  if (subscriptionid) {
+    const subscription = await GuildService.getSubscription(subscriptionid as string);
+
+    if (!subscription) {
+      return res.status(404).json(errors.response_404.UNKNOWN_SUBSCRIPTION_PLAN);
+    }
+
+    req.subscription = subscription;
+  }
+
+  return next();
+}
+
+function memberMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { memberid } = req.params;
+
+  if (memberid) {
+    if (!req.guild || !req.guild.members) {
+      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
+    }
+
+    const member = req.guild.members.find((x) => x.id === memberid);
+
+    if (!member) {
+      return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
+    }
+
+    req.member = member;
+  }
+
+  return next();
+};
+
+function roleMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { roleid } = req.params;
+
+  if (roleid) {
+    if (!req.guild || !req.guild.roles) {
+      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
+    }
+
+    const role = req.guild.roles.find((x) => x.id === roleid);
+
+    if (!role) {
+      return res.status(404).json(errors.response_404.UNKNOWN_ROLE);
+    }
+
+    req.role = role;
+  }
+
+  return next();
+}
 /**
  * User middleware is used to check whether the userid in the params is valid and they are in a guild with them in order to make the request. 
  */
 
-async function userMiddleware(req: Request, res: Response, next: NextFunction) {
+//What is a better fucking name for this?
+async function friendsAndMutualGuildsMiddleware(req: Request, res: Response, next: NextFunction) {
   const account = req.account;
-  const user = req.user;
+  const { userid } = req.params;
 
-  if (!user) {
+  if (!userid) {
     return res.status(404).json(errors.response_404.UNKNOWN_USER);
   }
 
-  const friends = await globalUtils.areWeFriends(account.id, user.id);
+  const friends = await globalUtils.areWeFriends(account.id, userid as string);
 
   if (friends) {
     return next();
@@ -471,7 +535,7 @@ async function userMiddleware(req: Request, res: Response, next: NextFunction) {
     where: {
       members: {
         some: {
-          user_id: user.id
+          user_id: userid as string
         }
       }
     },
@@ -503,68 +567,187 @@ async function userMiddleware(req: Request, res: Response, next: NextFunction) {
  * Channel Middleware is necessary to add a channel to a channelid param, and a guild if there isn't one already. Afterwards, it checks if they can READ_MESSAGES in that channel requested before allowing them to continue.
  */
 
+async function userMiddleware(req: Request, res: Response, next: NextFunction) {
+  let { userid } = req.params;
+
+  if (userid === '@me') {
+    userid = req.account.id;
+  }
+
+  if (userid) {
+    let user = await AccountService.getById(userid as string) as Account;
+
+    if (!user) {
+      return res.status(404).json(errors.response_404.UNKNOWN_USER);
+    }
+
+    req.user = user;
+    req.is_user_staff = req.user && (req.user.flags!! & (1 << 0)) === 1 << 0;
+
+    if (req.user != null && req.is_user_staff && req.user.staff)
+      req.user_staff_details = req.user.staff;
+  }
+
+  return next();
+}
+
+async function inviteMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { code } = req.params;
+
+  if (code) {
+    let invite = await InviteService.getInviteByCode(code as string);
+
+    if (!invite) {
+      return res.status(404).json(errors.response_404.UNKNOWN_INVITE);
+    }
+
+    if (!req.guild && req.invite && req.invite.channel.guild_id) {
+      const guild = await GuildService.getById(req.invite.channel.guild_id);
+
+      if (!guild) {
+        return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
+      }
+
+      req.guild = guild;
+    }
+    
+    req.invite = invite;
+  }
+  return next();
+}
+
+async function applicationMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { applicationid } = req.params;
+
+  if (applicationid) {
+    const application = await OAuthService.getApplicationById(applicationid as string);
+
+    if (!application) {
+      return res.status(404).json(errors.response_404.UNKNOWN_APPLICATION);
+    }
+
+    req.application = application;
+  }
+
+  return next();
+}
+
+async function recipientMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { recipientid } = req.params;
+  
+  if (recipientid) {
+    const recipient = await AccountService.getById(recipientid as string);
+
+    if (!recipient) {
+      return res.status(404).json(errors.response_404.UNKNOWN_USER);
+    }
+
+    req.recipient = recipient;
+  }
+
+  return next();
+}
+
+async function messageMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { messageid } = req.params;
+
+  if (messageid) {
+    let rawMessage = await MessageService.getMessageById(messageid as string);
+
+    if (!rawMessage) {
+      return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
+    }
+
+    req.message = MessageService.formatMessage(rawMessage, rawMessage.author, rawMessage.mentions, rawMessage.mention_roles, rawMessage.reactions, rawMessage.author.webhook ?? false);  
+  }
+
+  return next();
+}
+
+async function webhookMiddleware(req: Request, res: Response, next: NextFunction) {
+  const { webhookid } = req.params;
+
+  if (webhookid) {
+    const webhook = await WebhookService.getWebhookById(webhookid as string);
+
+    if (!webhook) {
+      return res.status(404).json(errors.response_404.UNKNOWN_WEBHOOK);
+    }
+
+    req.webhook = webhook;
+  }
+
+  return next();
+}
+
 async function channelMiddleware(req: Request, res: Response, next: NextFunction) {
-  const channel = req.channel;
+  const { channelid } = req.params;
 
-  if (!channel) {
-    return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
+  if (channelid) {
+    try {
+      const rawChannel = await prisma.channel.findUnique({
+        where: {
+          id: channelid as string
+        },
+        include: {
+          guild: {
+            include: {
+              members: {
+                include: {
+                  user: true
+                }
+              },
+              roles: true
+            }
+          }
+        }
+      });
+
+      if (!rawChannel) {
+        return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
+      }
+
+      if (rawChannel.id.includes('12792182114301050')) {
+        return next();
+      }
+
+      req.channel = await ChannelService._formatChannelObject(rawChannel);
+
+      const typeInt = parseInt(req.channel.type as string);
+
+      req.channel.type = req.channel_types_are_ints ? typeInt : (typeInt === ChannelType.VOICE ? 'voice' : 'text');
+
+      if (rawChannel.guild) {
+        req.guild = GuildService._formatResponse(rawChannel.guild);
+
+        const sender = req.account;
+        const member = req.guild.members?.find((m: any) => m.id === sender.id);
+
+        if (!member) {
+          return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
+        }
+
+        req.member = member;
+
+        const hasPermission = await permissions.hasChannelPermissionTo(
+          req.channel.id,
+          req.guild.id,
+          member.id,
+          'READ_MESSAGES'
+        );
+
+        if (!hasPermission && !req.is_staff) {
+          return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
+        }
+      }
+    } catch (error) {
+      logText(error, 'error');
+
+      return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+    }
   }
 
-  if (!channel.guild_id) {
-    return next();
-  }
-
-  if (!req.params.guildid) {
-    req.params.guildid = channel.guild_id;
-  }
-
-  const sender = req.account;
-
-  if (!sender) {
-    return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
-  }
-
-  if (!req.guild && channel.id.includes('12792182114301050')) {
-    return next();
-  }
-
-  if (!req.guild) {
-    req.guild = await GuildService.getById(req.params.guildid as string);
-  }
-
-  if (req.is_staff) {
-    return next();
-  }
-
-  const member = req.guild.members?.find((y) => y.id == sender.id);
-
-  if (member == null) {
-    return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
-  }
-
-  const gCheck = permissions.hasGuildPermissionTo(
-    req.guild.id,
-    member.id,
-    'READ_MESSAGES',
-    req.client_build,
-  );
-
-  if (!gCheck) {
-    return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
-  }
-
-  const pCheck = await permissions.hasChannelPermissionTo(
-    req.channel!.id,
-    req.guild.id,
-    member.id,
-    'READ_MESSAGES',
-  );
-
-  if (!pCheck) {
-    return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
-  }
-
-  next();
+  return next();
 }
 
 /**
@@ -763,8 +946,17 @@ export {
   guildMiddleware,
   guildPermissionsMiddleware,
   instanceMiddleware,
+  webhookMiddleware,
   rateLimitMiddleware,
   staffAccessMiddleware,
+  inviteMiddleware,
   userMiddleware,
+  roleMiddleware,
+  memberMiddleware,
+  messageMiddleware,
+  recipientMiddleware,
+  applicationMiddleware,
+  subscriptionMiddleware,
+  friendsAndMutualGuildsMiddleware,
   cacheForMiddleware,
 };

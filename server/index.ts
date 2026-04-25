@@ -37,7 +37,7 @@ JSON.parse = (text: string, reviver?: any): any => {
 import cookieParser from 'cookie-parser';
 import express from "express"
 import type { NextFunction, Request, Response } from 'express';
-import fs from 'fs';
+import fs, { existsSync, readFileSync } from 'fs';
 import { createServer, IncomingMessage, Server, ServerResponse } from 'http';
 import https from 'https';
 import { Jimp } from 'jimp';
@@ -69,6 +69,19 @@ import ctx from './context.ts';
 
 // TODO: Replace all String() or "as type" conversions with better ones
 
+const configPath = './config.json';
+
+if (!existsSync(configPath)) {
+  console.error(
+    'No config.json file exists: Please create one using config.example.json as a template.',
+  );
+  process.exit(1);
+}
+
+ctx.config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+globalUtils.config = ctx.config!!;
+
 app.set('trust proxy', 1);
 
 (async () => {
@@ -94,7 +107,6 @@ if (globalUtils.config.email_config.enabled) {
 
 ctx.sessions = new Map<string, Session>();
 ctx.userSessions = new Map<string, Session[]>();
-ctx.config = globalUtils.config;
 ctx.rooms = [];
 ctx.MEDIA_CODECS = [
   {
@@ -300,7 +312,13 @@ app.get('/proxy/:url', async (req: Request, res: Response) => {
       return;
     }
 
-    const contentType = response.headers.get('content-type')?.toLowerCase() || 'image/jpeg';
+    const contentType = (response.headers.get('content-type')?.toLowerCase() || 'image/jpeg') as 
+    | "image/png" 
+    | "image/jpeg" 
+    | "image/gif" 
+    | "image/bmp" 
+    | "image/tiff" 
+    | "image/x-ms-bmp";
 
     if (!contentType.startsWith('image/')) {
       res.status(400).send('Only images are supported via this route. Try harder.');
@@ -790,7 +808,6 @@ if (config.serve_selector) {
 
 app.get('/launch', (req: Request, res: Response) => {
     if (!req.query.release_date && config.require_release_date_cookie) {
-      console.log("xxx");
       res.redirect('/selector');
       return;
     }

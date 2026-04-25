@@ -44,7 +44,8 @@ async function handleIdentify(socket: WebSocket, packet: RTCIdentify) {
       avatar: true,
       bot: true,
       premium: true,
-      id: true
+      id: true,
+      email: true
     }
   })
 
@@ -606,7 +607,8 @@ async function handleResume(socket: WebSocket, packet: any) {
       bot: true,
       premium: true,
       id: true,
-      token: true
+      token: true,
+      email: true
     }
   })
 

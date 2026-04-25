@@ -1,13 +1,9 @@
-//https://staging.oldcordapp.com/api/v6/hypesquad/online
-
 import { Router } from 'express';
-
 import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
 import { rateLimitMiddleware } from '../helpers/middlewares.ts';
 import type { Response, Request } from "express";
 import { prisma } from '../prisma.ts';
-import ctx from '../context.ts';
 
 const router = Router({ mergeParams: true });
 const HOUSE_FLAGS: Record<number, number> = {
@@ -26,8 +22,7 @@ const updateAccountFlags = async (accountId: string, newFlags: number) => {
 };
 
 router.post('/online', rateLimitMiddleware(
-    ctx.config!.ratelimit_config.hypesquadHouseChange.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.hypesquadHouseChange.timeFrame,
+   "hypesquadHouseChange"
   ), async (req: Request, res: Response) => {
   try {
     const { house_id } = req.body;
@@ -58,8 +53,7 @@ router.post('/online', rateLimitMiddleware(
 });
 
 router.post('/the-true-one', rateLimitMiddleware(
-    ctx.config!.ratelimit_config.hypesquadHouseChange.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.hypesquadHouseChange.timeFrame,
+   "hypesquadHouseChange"
   ), async (req: Request, res: Response) => {
   try {
     const flags = Number(req.account.flags || 0) ^ THE_TRUE_ONE;

@@ -24,6 +24,7 @@ export interface Config {
         value : number;
     };
     tenor_api_key: string;
+    max_message_embeds: number;
     require_release_date_cookie: boolean;
     cache_authenticated_get_requests: boolean;
     klipy_api_key: string;

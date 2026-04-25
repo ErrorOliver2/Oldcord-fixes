@@ -4,30 +4,31 @@ import dispatcher from '../../helpers/dispatcher.ts';
 import errors from '../../helpers/errors.ts';
 import globalUtils from '../../helpers/globalutils.ts';
 import { logText } from '../../helpers/logger.ts';
-import { cacheForMiddleware, rateLimitMiddleware, userMiddleware } from '../../helpers/middlewares.ts';
+import { cacheForMiddleware, rateLimitMiddleware, friendsAndMutualGuildsMiddleware, userMiddleware } from '../../helpers/middlewares.ts';
 import me from './me/index.js';
 import type { Request, Response } from "express";
 import { prisma } from '../../prisma.ts';
 import type { User } from '../../types/user.ts';
-import ctx from '../../context.ts';
 import { RelationshipType } from '../../types/relationship.ts';
 import { PUBLIC_USER_SELECT } from '../services/accountService.ts';
 import type { ConnectedAccount } from '../../types/account.ts';
 
-const router = Router();
+const router = Router({
+  mergeParams: true
+});
 
 router.use('/@me', me);
 
-router.get('/:userid', userMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
+router.get('/:userid', userMiddleware, friendsAndMutualGuildsMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   return res.status(200).json(globalUtils.miniUserObject(req.user as User));
 });
 
 //new dm system / group dm system
 router.post(
   '/:userid/channels',
+  userMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.createPrivateChannel.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.createPrivateChannel.timeFrame,
+    "createPrivateChannel",
   ),
   async (req: Request, res: Response) => {
     try {
@@ -153,7 +154,7 @@ router.post(
   },
 );
 
-router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
+router.get('/:userid/profile', userMiddleware, friendsAndMutualGuildsMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const user = req.user;
@@ -271,7 +272,7 @@ router.get('/:userid/profile', userMiddleware, cacheForMiddleware(60 * 5, "priva
   }
 });
 
-router.get('/:userid/relationships', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
+router.get('/:userid/relationships', userMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const account = req.account;
 

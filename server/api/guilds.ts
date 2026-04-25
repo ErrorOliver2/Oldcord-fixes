@@ -10,6 +10,7 @@ import {
   guildPermissionsMiddleware,
   instanceMiddleware,
   rateLimitMiddleware,
+  subscriptionMiddleware,
 } from '../helpers/middlewares.ts';
 import bans from './bans.ts';
 import emojis from './emojis.ts';
@@ -22,7 +23,9 @@ import permissions from '../helpers/permissions.ts';
 import { ChannelType } from '../types/channel.ts';
 import ctx from '../context.ts';
 
-const router = Router();
+const router = Router({
+  mergeParams: true
+});
 
 router.get('/:guildid', guildMiddleware, cacheForMiddleware(60 * 10, "private", false), async (req: Request, res: Response) => {
   return res.status(200).json(req.guild);
@@ -32,8 +35,7 @@ router.post(
   '/',
   instanceMiddleware('NO_GUILD_CREATION'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.createGuild.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.createGuild.timeFrame,
+    "createGuild",
   ),
   async (req: Request, res: Response) => {
     try {
@@ -239,21 +241,19 @@ async function guildDeleteRequest(req: Request, res: Response) {
 //later 2016 guild deletion support - why the fuck do they do it like this?
 router.post(
   '/:guildid/delete',
-  guildMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.leaveGuild.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.leaveGuild.maxPerTimeFrame,
+    "deleteGuild",
   ),
+  guildMiddleware,
   guildDeleteRequest,
 );
 
 router.delete(
   '/:guildid',
-  guildMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.deleteGuild.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.deleteGuild.timeFrame,
+     "deleteGuild",
   ),
+  guildMiddleware,
   guildDeleteRequest
 );
 
@@ -264,8 +264,7 @@ router.get(
   guildMiddleware,
   guildPermissionsMiddleware('READ_MESSAGE_HISTORY'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.messageSearching.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.messageSearching.timeFrame,
+    "messageSearching"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -330,7 +329,7 @@ router.get(
         if (canReadChannel) {
           delete result.reactions;
 
-          result.hit = true;
+          (result as any).hit = true;
 
           ret_results.push([result]);
         } else minus++;
@@ -356,8 +355,7 @@ router.patch(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateGuild.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateGuild.timeFrame,
+    "updateGuild"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -502,8 +500,7 @@ router.put(
   '/:guildid/premium/subscriptions',
   guildMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.subscriptions.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.subscriptions.timeFrame,
+    "subscriptions"
   ),
   async (req: Request, res: Response) => {
     const tryBoostServer = await GuildService.createGuildSubscription(req.account.id, req.guild.id);
@@ -522,9 +519,9 @@ router.put(
 router.delete(
   '/:guildid/premium/subscriptions/:subscriptionid',
   guildMiddleware,
+  subscriptionMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.subscriptions.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.subscriptions.timeFrame,
+    "subscriptions"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -683,8 +680,7 @@ router.post(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_CHANNELS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.createChannel.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.createChannel.timeFrame,
+    "createChannel"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -781,8 +777,7 @@ router.patch(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_CHANNELS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateChannel.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateChannel.timeFrame,
+    "updateChannel"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -843,10 +838,10 @@ router.post('/:guildid/ack', async (_req: Request, res: Response) => {
   return res.status(204).send(); //to-do
 });
 
-router.use('/:guildid/roles', roles);
-router.use('/:guildid/members', members);
-router.use('/:guildid/bans', bans);
-router.use('/:guildid/emojis', emojis);
+router.use('/:guildid/roles', guildMiddleware, roles);
+router.use('/:guildid/members', guildMiddleware, members);
+router.use('/:guildid/bans',  guildMiddleware, bans);
+router.use('/:guildid/emojis', guildMiddleware, emojis);
 
 //too little to make a route for it,
 
@@ -937,7 +932,7 @@ router.patch(
   },
 );
 
-router.get('/:guildid/application-command-index', guildMiddleware, async (_req: Request, res: Response) => {
+router.get('/:guildid/application-command-index', async (_req: Request, res: Response) => {
   return res.status(403).json({
     code: 403,
     message:

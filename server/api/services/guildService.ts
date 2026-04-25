@@ -1,4 +1,4 @@
-import globalUtils, { formatMessage, parseMentions } from "../../helpers/globalutils.ts";
+import globalUtils, { parseMentions } from "../../helpers/globalutils.ts";
 import dispatcher from "../../helpers/dispatcher.ts";
 import { prisma } from "../../prisma.ts";
 import errors from "../../helpers/errors.ts";
@@ -15,6 +15,7 @@ import type { Role } from "../../types/role.ts";
 import { ChannelType } from "../../types/channel.ts";
 import { ChannelService } from "./channelService.ts";
 import type WebSocket from 'ws';
+import ctx from "../../context.ts";
 
 export const GuildService = {
     _formatResponse(guild: any): Guild {
@@ -34,16 +35,59 @@ export const GuildService = {
             mfa_level: 0, //to-do add this to the guild schema of prisma
             application_id: null,
             system_channel_id: guild.system_channel_id,
-            roles: guild.roles,
+            roles: (guild.roles || []).map((role: any) => {
+                return {
+                    id: role.role_id || role.id,
+                    name: role.name,
+                    permissions: role.permissions,
+                    color: role.color,
+                    hoist: role.hoist,
+                    position: role.position,
+                    managed: role.managed || false,
+                    mentionable: role.mentionable
+                };
+            }) || [],
             emojis: (guild.custom_emojis as any[]) || [],
+            channels: guild.channels
+            ? guild.channels.map((channel: any) => {
+                return ChannelService._formatChannelObjectSimple(channel);
+            }) : [],
+            members: guild.members.map((member: any) => {
+                return {
+                    deaf: member.deaf,
+                    mute: member.mute,
+                    id: member.user_id,
+                    nick: member.nick,
+                    roles: member.roles,
+                    joined_at: member.joined_at,
+                    user: member.user ? globalUtils.miniUserObject(member.user) : {
+                        id: member.user_id
+                    }
+                }
+            }) || [],
+            presences: guild.members.map((member: any) => {
+                return globalUtils.getUserPresence(member)
+            }) || [],
             features: (guild.features as string[]) || [],
             exclusions: (guild.exclusions as any[]) || [],
             widget_enabled: false,
             widget_channel_id: null,
             premium_progress_bar_enabled: guild.premium_progress_bar_enabled ?? false,
-            unavailable: guild.unavailable ?? false
+            unavailable: guild.unavailable ?? false,
+            voice_states: ctx.guild_voice_states.get(guild.id) || []
         };
     },
+
+    /*
+     name: string;
+    guild_id: string;
+    role_id: string;
+    hoist: boolean;
+    color: number;
+    mentionable: boolean;
+    permissions: number;
+    position: number;
+    */
 
     async isMemberIn(userId: string, guildId: string): Promise<boolean> {
         const count = await prisma.member.count({
@@ -121,7 +165,8 @@ export const GuildService = {
             select: {
                 id: true,
                 system_channel_id: true,
-                members: { select: { user_id: true } }
+                members: { select: { user_id: true } },
+                roles: true
             }
         });
 
@@ -215,9 +260,13 @@ export const GuildService = {
         });
 
         if (!guild) {
+             console.log("wtf 26666 " + guildId);
             throw { status: 404, error: 'UNKNOWN_GUILD' };
         }
 
+        guild.members.forEach(x => {
+            x.roles
+        })
         return this._formatResponse(guild);
     },
     async createGuildSubscription(user_id: string, guild_id: string): Promise<GuildSubscription | null> {
@@ -705,20 +754,9 @@ export const GuildService = {
                     .map((id: string) => accountMap.get(id))
                     .filter(Boolean);
 
-                const formattedAttachments = (row.attachments || []).map((att: any) => ({
-                    filename: att.filename,
-                    height: att.height,
-                    width: att.width,
-                    id: att.attachment_id,
-                    proxy_url: att.url,
-                    url: att.url,
-                    size: att.size,
-                }));
-
-                return formatMessage(
+                return MessageService.formatMessage(
                     row,
                     author,
-                    formattedAttachments,
                     mentions,
                     mentions_data.mention_roles || [],
                     [],

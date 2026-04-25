@@ -6,7 +6,7 @@ import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
 import md5 from '../helpers/md5.ts';
-import { authMiddleware, guildPermissionsMiddleware } from '../helpers/middlewares.ts';
+import { authMiddleware, guildPermissionsMiddleware, webhookMiddleware } from '../helpers/middlewares.ts';
 import Snowflake from '../helpers/snowflake.ts';
 import { ChannelService } from './services/channelService.ts';
 import { WebhookService } from './services/webhookService.ts';
@@ -20,6 +20,7 @@ const router = Router({ mergeParams: true });
 router.patch(
   '/:webhookid',
   authMiddleware,
+  webhookMiddleware,
   guildPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
@@ -68,6 +69,7 @@ router.patch(
 router.delete(
   '/:webhookid',
   authMiddleware,
+  webhookMiddleware,
   guildPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
@@ -84,7 +86,7 @@ router.delete(
   },
 );
 
-router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => {
+router.post('/:webhookid/:webhooktoken', webhookMiddleware, async (req: Request, res: Response) => {
   try {
     const webhook = req.webhook;
 
@@ -241,7 +243,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      createMessage.author.username = override.username ?? webhook.name;
+      createMessage.author.username = override.username ?? webhook.name ?? 'Captain Hook';
       createMessage.author.avatar = override.avatar_url;
     }
 
@@ -255,7 +257,7 @@ router.post('/:webhookid/:webhooktoken', async (req: Request, res: Response) => 
   }
 });
 
-router.post('/:webhookid/:webhooktoken/github', async (req: Request, res: Response) => {
+router.post('/:webhookid/:webhooktoken/github', webhookMiddleware, async (req: Request, res: Response) => {
   try {
     const webhook = req.webhook;
     const channel = await ChannelService.getChannelById(webhook.channel_id);

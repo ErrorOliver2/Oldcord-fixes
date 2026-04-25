@@ -1,7 +1,7 @@
 import { json, Router } from 'express';
 import ffmpeg from 'fluent-ffmpeg';
 const { ffprobe } = ffmpeg;
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { mkdir, writeFile } from 'fs';
 import { Jimp } from 'jimp';
 import multer from 'multer';
 import { extname, join } from 'path';
@@ -14,14 +14,14 @@ import {
   channelPermissionsMiddleware,
   instanceMiddleware,
   rateLimitMiddleware,
+  messageMiddleware
 } from '../helpers/middlewares.ts';
 import Snowflake from '../helpers/snowflake.ts';
 import reactions from './reactions.ts';
-import { AccountService } from './services/accountService.ts';
 import { MessageService } from './services/messageService.ts';
 import type { NextFunction, Request, Response } from "express";
-import { ChannelType } from '../types/channel.ts';
-import type { Account } from '../types/account.ts';
+import { ChannelType, type Channel } from '../types/channel.ts';
+import type { Account, AccountSettings } from '../types/account.ts';
 import { RelationshipType } from '../types/relationship.ts';
 import { GuildService } from './services/guildService.ts';
 import type { Message } from '../types/message.ts';
@@ -33,7 +33,7 @@ import type { Embed } from '../types/embed.ts';
 const upload = multer();
 const router = Router({ mergeParams: true });
 
-router.use('/:messageid/reactions', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), reactions);
+router.use('/:messageid/reactions', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), messageMiddleware, reactions);
 
 function handleJsonAndMultipart(req: Request, res: Response, next: NextFunction) {
   const contentType = req.headers['content-type'];
@@ -97,20 +97,262 @@ router.get(
   },
 );
 
+async function validateDMRules(account: Account, channel: Channel): Promise<boolean> {
+  try {
+    const recipients = channel.recipients!!;
+
+    if (channel.type == ChannelType.DM) {
+      const recipientID = recipients[recipients[0].id == account.id ? 1 : 0].id;
+
+      const blockCheck = await prisma.relationship.findFirst({
+        where: {
+          OR: [
+            { user_id_1: account.id, user_id_2: recipientID, type: RelationshipType.BLOCKED },
+            { user_id_1: recipientID, user_id_2: account.id, type: RelationshipType.BLOCKED }
+          ]
+        }
+      });
+
+      if (blockCheck) {
+         return false;
+      }
+
+      const isFriend = await prisma.relationship.findFirst({
+        where: { 
+          user_id_1: account.id, 
+          user_id_2: recipientID, 
+          type: RelationshipType.FRIEND 
+        }
+      });
+
+      if (isFriend) {
+        return true;
+      }
+
+      const mutualGuilds = await GuildService.getMutualGuilds(account.id, recipientID);
+
+      if (mutualGuilds.length === 0) {
+         return false;
+      }
+
+      const recipientSettings = await prisma.user.findUnique({
+        where: { 
+          id: recipientID 
+        },
+        select: { settings: true }
+      });
+
+      const hasAllowedSharedGuild = mutualGuilds.some((guild) => {
+        const senderAllows = !account.settings?.restricted_guilds?.includes(guild.id);
+        const recipientAllows = !(recipientSettings?.settings as AccountSettings)?.restricted_guilds?.includes(guild.id);
+        return senderAllows && recipientAllows;
+      });
+
+      if (!hasAllowedSharedGuild) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+  catch (error) {
+     logText(error, 'error');
+
+     return false;
+  }
+};
+
+function processEmbeds(embeds: Embed[]): Embed[] {
+  try {
+    const MAX_EMBEDS = ctx.config?.max_message_embeds;
+    const proxyUrl = (url: string) => {
+      return url ? `/proxy/${encodeURIComponent(url)}` : null;
+    };
+
+    if (Array.isArray(embeds)) {
+      embeds = embeds.slice(0, MAX_EMBEDS).map((embed: Embed) => {
+        const embedObj = {
+          type: 'rich',
+          color: embed.color ?? 7506394,
+        } as Embed;
+
+        if (embed.title) embedObj.title = embed.title;
+        if (embed.description) embedObj.description = embed.description;
+        if (embed.url) embedObj.url = embed.url;
+        if (embed.timestamp) embedObj.timestamp = embed.timestamp;
+
+        if (embed.author) {
+          const icon = proxyUrl(embed.author.icon_url!!);
+
+          embedObj.author = {
+            name: embed.author.name ?? null,
+            url: embed.author.url ?? null,
+            icon_url: icon,
+            proxy_icon_url: icon,
+          };
+        }
+
+        if (embed.thumbnail?.url) {
+          const thumb = proxyUrl(embed.thumbnail.url);
+
+          const raw_width = embed.thumbnail.width ?? 400;
+          const raw_height = embed.thumbnail.height ?? 400;
+
+          embedObj.thumbnail = {
+            url: thumb!!,
+            proxy_url: thumb!!,
+            width: Math.min(Math.max(raw_width, 400), 800),
+            height: Math.min(Math.max(raw_height, 400), 800),
+          };
+        }
+
+        if (embed.image?.url) {
+          const img = proxyUrl(embed.image.url);
+          const raw_width = embed.image.width ?? 400;
+          const raw_height = embed.image.height ?? 400;
+
+          embedObj.image = {
+            url: img!!,
+            proxy_url: img!!,
+            width: Math.min(Math.max(raw_width, 400), 800),
+            height: Math.min(Math.max(raw_height, 400), 800),
+          };
+        }
+
+        if (embed.footer) {
+          const footerIcon = proxyUrl(embed.footer.icon_url!!);
+
+          embedObj.footer = {
+            text: embed.footer.text ?? null,
+            icon_url: footerIcon,
+            proxy_icon_url: footerIcon,
+          };
+        }
+
+        if (Array.isArray(embed.fields) && embed.fields.length > 0) {
+          embedObj.fields = embed.fields.map((f) => ({
+            name: f.name ?? '',
+            value: f.value ?? '',
+            inline: !!f.inline,
+          }));
+        }
+
+        return embedObj;
+      });
+    }
+
+    return embeds;
+  } catch (error) {
+     logText(error, 'error');
+
+     return [];
+  }
+};
+
+async function getVideoDimensions(filePath: string, folder: string): Promise<{width: number, height: number}> {
+  return new Promise((resolve) => {
+    ffmpeg(filePath)
+      .on('end', () => {
+        ffprobe(filePath, (_err, metadata) => {
+          const stream = metadata?.streams.find(x => x.codec_type === 'video');
+
+          resolve({ width: stream?.width || 500, height: stream?.height || 500 });
+        });
+      })
+      .on('error', () => resolve({ width: 500, height: 500 }))
+      .screenshots({ count: 1, timemarks: ['1'], filename: 'thumbnail.png', folder });
+  });
+}
+
+async function processAttachments(files: Express.Multer.File[], channelId: string): Promise<{
+  id: string;
+  size: number;
+  name: any;
+  filename: any;
+  url: string;
+  width: number;
+  height: number;
+}[]> {
+  if (!files || files.length === 0) return [];
+
+  const processingPromises = files.map(async (file) => {
+    if (file.size >= ctx.config!.limits['attachments'].max_size) {
+      throw { status: 400,  message: `Message attachments cannot be larger than ${ctx.config!.limits['attachments'].max_size} bytes.`, };
+    }
+
+    const fileId = Snowflake.generate();
+    const sanitizedName = globalUtils.replaceAll(file.originalname, ' ', '_').replace(/[^A-Za-z0-9_\-.()\[\]]/g, '');
+
+    if (!sanitizedName) {
+      throw { status: 403, message: 'Invalid filename' };
+    }
+
+    const attachmentDir = join('.', 'www_dynamic', 'attachments', channelId, fileId);
+    const filePath = join(attachmentDir, sanitizedName);
+
+    await mkdir(attachmentDir,  {
+      recursive: true
+    }, (error) => {
+      logText(error, 'error');
+      
+      throw { status: 500, message: "Internal Server Error" }
+    });
+
+    await writeFile(filePath, file.buffer, (error) => {
+      logText(error, 'error');
+      
+      throw { status: 500, message: "Internal Server Error" }
+    });
+
+    const fileDetail = {
+      id: fileId,
+      size: file.size,
+      name: sanitizedName,
+      filename: sanitizedName,
+      url: `${globalUtils.config.secure ? 'https' : 'http'}://${globalUtils.config.base_url}${globalUtils.nonStandardPort ? `:${globalUtils.config.port}` : ''}/attachments/${channelId}/${fileId}/${sanitizedName}`,
+      width: 0,
+      height: 0
+    };
+
+    const fileExt = extname(sanitizedName).toLowerCase();
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif'];
+
+    try {
+      if (imageExtensions.includes(fileExt)) {
+        const image = await Jimp.read(file.buffer);
+
+        fileDetail.width = image.bitmap.width;
+        fileDetail.height = image.bitmap.height;
+      } else if (['.mp4', '.webm'].includes(fileExt)) {
+        const meta = await getVideoDimensions(filePath, attachmentDir);
+
+        fileDetail.width = meta.width;
+        fileDetail.height = meta.height;
+      }
+    } catch (err) {
+      logText(`Failed to get metadata for file: ${sanitizedName}`, 'warn');
+
+      fileDetail.width = 500;
+      fileDetail.height = 500;
+    }
+
+    return fileDetail;
+  });
+
+  return Promise.all(processingPromises);
+}
+
 router.post(
   '/',
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   handleJsonAndMultipart,
   channelPermissionsMiddleware('SEND_MESSAGES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.sendMessage.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.sendMessage.timeFrame,
+    "sendMessage"
   ),
   async (req: Request, res: Response) => {
     try {
-      const account = req.account;
-      const author = account;
-      const channel = req.channel;
+      const { account, channel, guild, files } = req;
 
       if (channel.type === ChannelType.VOICE) {
         return res.status(400).json({
@@ -119,241 +361,54 @@ router.post(
         });
       }
 
-      if (req.body.payload_json) {
-        try {
-          const payload = JSON.parse(req.body.payload_json);
+      let body = req.body;
 
-          req.body = { ...req.body, ...payload };
+      if (body.payload_json) {
+        try {
+          body = { ...body, ...JSON.parse(body.payload_json) };
         } catch (e) {
           return res.status(400).json({ message: 'Invalid payload_json format' });
         }
+      }
+
+      let tts = body.tts === true || body.tts === 'true';
+
+      const content = body.content?.trim() || '';
+      const hasAssets = (Array.isArray(body.embeds) && body.embeds.length > 0) || (Array.isArray(files) && files.length > 0);
+
+      if (!content && !hasAssets) {
+        return res.status(400).json(errors.response_400.CANNOT_SEND_EMPTY_MESSAGE);
       }
 
       if (req.body.content && typeof req.body.content === 'string') {
         req.body.content = req.body.content.trim();
       }
 
-      if (
-        !req.body.embeds &&
-        !req.files &&
-        (!req.body.content || typeof req.body.content !== 'string' || req.body.content === '')
-      ) {
-        return res.status(400).json(errors.response_400.CANNOT_SEND_EMPTY_MESSAGE);
-      } //this aswell
+      const { min, max } = ctx.config!.limits['messages'];
 
-      if (req.body.content && !req.body.embeds) {
-        const min = ctx.config!.limits['messages'].min;
-        const max = ctx.config!.limits['messages'].max;
-
-        if (req.body.content.length < min || req.body.content.length > max) {
-          return res.status(400).json({
-            code: 400,
-            content: `Must be between ${min} and ${max} characters.`,
-          });
-        }
+      if (content && (content.length < min || content.length > max)) {
+        return res.status(400).json({ code: 400, message: `Must be between ${min} and ${max} characters.` });
       }
 
-      let embeds: Embed[] = []; //So... discord removed the ability for users to create embeds in their messages way back in like 2020, killing the whole motive of self bots, but here at Oldcord, we don't care - just don't abuse our API.
-
-      if (
-        req.body.embeds &&
-        !req.files &&
-        (!Array.isArray(req.body.embeds) || req.body.embeds.length === 0)
-      ) {
-        return res.status(400).json(errors.response_400.CANNOT_SEND_EMPTY_MESSAGE);
-      }
-
-      const MAX_EMBEDS = 10; //to-do make this configurable
-
-      const proxyUrl = (url: string) => {
-        return url ? `/proxy/${encodeURIComponent(url)}` : null;
-      };
-
-      if (Array.isArray(req.body.embeds)) {
-        embeds = req.body.embeds.slice(0, MAX_EMBEDS).map((embed: Embed) => {
-          const embedObj = {
-            type: 'rich',
-            color: embed.color ?? 7506394,
-          } as any;
-
-          if (embed.title) embedObj.title = embed.title;
-          if (embed.description) embedObj.description = embed.description;
-          if (embed.url) embedObj.url = embed.url;
-          if (embed.timestamp) embedObj.timestamp = embed.timestamp;
-
-          if (embed.author) {
-            const icon = proxyUrl(embed.author.icon_url!!);
-
-            embedObj.author = {
-              name: embed.author.name ?? null,
-              url: embed.author.url ?? null,
-              icon_url: icon,
-              proxy_icon_url: icon,
-            };
-          }
-
-          if (embed.thumbnail?.url) {
-            const thumb = proxyUrl(embed.thumbnail.url);
-
-            const raw_width = embed.thumbnail.width ?? 400;
-            const raw_height = embed.thumbnail.height ?? 400;
-
-            embedObj.thumbnail = {
-              url: thumb,
-              proxy_url: thumb,
-              width: Math.min(Math.max(raw_width, 400), 800),
-              height: Math.min(Math.max(raw_height, 400), 800),
-            };
-          }
-
-          if (embed.image?.url) {
-            const img = proxyUrl(embed.image.url);
-
-            const raw_width = embed.image.width ?? 400;
-            const raw_height = embed.image.height ?? 400;
-
-            embedObj.image = {
-              url: img,
-              proxy_url: img,
-              width: Math.min(Math.max(raw_width, 400), 800),
-              height: Math.min(Math.max(raw_height, 400), 800),
-            };
-          }
-
-          if (embed.footer) {
-            const footerIcon = proxyUrl(embed.footer.icon_url!!);
-
-            embedObj.footer = {
-              text: embed.footer.text ?? null,
-              icon_url: footerIcon,
-              proxy_icon_url: footerIcon,
-            };
-          }
-
-          if (Array.isArray(embed.fields) && embed.fields.length > 0) {
-            embedObj.fields = embed.fields.map((f) => ({
-              name: f.name ?? '',
-              value: f.value ?? '',
-              inline: !!f.inline,
-            }));
-          }
-
-          return embedObj;
-        });
-      }
-
-      const mentions_data = globalUtils.parseMentions(req.body.content);
-
-      if (
-        (mentions_data.mention_everyone || mentions_data.mention_here) &&
-        !await permissions.hasChannelPermissionTo(
-          req.channel.id,
-          req.guild.id,
-          author.id,
-          'MENTION_EVERYONE',
-        )
-      ) {
+      const mentions_data = globalUtils.parseMentions(content);
+      const canMentionEveryone = await permissions.hasChannelPermissionTo(channel.id, guild?.id || '', account.id, 'MENTION_EVERYONE');
+      
+      if (!canMentionEveryone || channel.recipients) {
         mentions_data.mention_everyone = false;
         mentions_data.mention_here = false;
-      }
-
-      if (mentions_data.mention_here) {
-        mentions_data.mention_everyone = true;
-      } //just make sure both are set to true
-
-      //Coerce tts field to boolean
-      req.body.tts = req.body.tts === true || req.body.tts === 'true';
-
-      if (!channel.recipients) {
-        if (!req.guild) {
-          return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-        }
-
-        if (!channel.guild_id) {
-          return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-        }
       }
 
       if (channel.recipients) {
-        //DM/Group channel rules
+        const canDM = await validateDMRules(account, channel); //DM/Group channel rules
 
-        //Disable @everyone and @here for DMs and groups
-        mentions_data.mention_everyone = false;
-        mentions_data.mention_here = false;
-
-        if (channel.type !== ChannelType.DM && channel.type !== ChannelType.GROUPDM) {
-          //Not a DM channel or group channel
-          return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-        }
-
-        if (channel.type == ChannelType.DM) {
-          //DM channel
-
-          //Need a complete user object for the relationships
-          const recipientID = channel.recipients[channel.recipients[0].id == author.id ? 1 : 0].id;
-          const recipient = await AccountService.getById(recipientID) as Account;
-
-          if (!recipient) {
-            return res.status(404).json(errors.response_404.UNKNOWN_USER);
-          }
-
-          const ourFriends = account.relationships;
-          const theirFriends = recipient.relationships;
-          let ourRelationshipState = ourFriends?.find((x) => x.user.id == recipient.id);
-          let theirRelationshipState = theirFriends?.find((x) => x.user.id == account.id);
-
-          if (!account.bot && !ourRelationshipState) {
-            ourFriends.push({
-              id: recipient.id,
-              type: RelationshipType.NONE,
-              user: globalUtils.miniUserObject(recipient),
-            });
-
-            ourRelationshipState = ourFriends.find((x) => x.user.id == recipient.id);
-          }
-
-          if (!recipient.bot && !theirRelationshipState) {
-            theirFriends.push({
-              id: account.id,
-              type: RelationshipType.NONE,
-              user: globalUtils.miniUserObject(account),
-            });
-
-            theirRelationshipState = theirFriends.find((x) => x.user.id == account.id);
-          }
-
-          if (ourRelationshipState?.type === RelationshipType.BLOCKED || theirRelationshipState?.type === RelationshipType.BLOCKED) {
-            return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
-          }
-
-          const mutualGuilds = await GuildService.getMutualGuilds(recipient.id, account.id);
-
-          if (recipient.bot && mutualGuilds.length === 0) {
-             return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
-          }
-
-          if (!recipient.bot && !globalUtils.areWeFriends(account.id, recipient.id)) {
-            const hasAllowedSharedGuild = mutualGuilds.some((guild) => {
-              const senderAllows = !account.settings!.restricted_guilds!.includes(guild.id);
-              const recipientAllows = !recipient.settings!.restricted_guilds!.includes(guild.id);
-
-              return senderAllows && recipientAllows;
-            });
-
-            if (ctx.config?.instance.flags.includes("")) {
-              return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
-            }
-
-            if (mutualGuilds.length === 0 || !hasAllowedSharedGuild) {
-              return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
-            }
-          }
+        if (!canDM) {
+           return res.status(403).json(errors.response_403.CANNOT_SEND_MESSAGES_TO_THIS_USER);
         }
       } else {
         //Guild rules
-        const canUseEmojis = !req.guild.exclusions?.includes('custom_emoji');
+        const canUseEmojis = !guild.exclusions?.includes('custom_emoji');
         const emojiPattern = /<:[\w-]+:\d+>/g;
-        const hasEmojiFormat = emojiPattern.test(req.body.content);
+        const hasEmojiFormat = emojiPattern.test(body.content);
 
         if (hasEmojiFormat && !canUseEmojis) {
           return res.status(400).json({
@@ -362,35 +417,20 @@ router.post(
           });
         }
 
-        if (
-          req.body.tts &&
-          !await permissions.hasChannelPermissionTo(
-            req.channel.id,
-            req.guild.id,
-            author.id,
-            'SEND_TTS_MESSAGES',
-          )
-        ) {
+        if (tts && !await permissions.hasChannelPermissionTo(channel.id, guild.id, account.id, 'SEND_TTS_MESSAGES')) {
           //Not allowed
-          req.body.tts = false;
+          tts = false;
         }
 
-        if (
-          channel.rate_limit_per_user!! > 0 &&
+        if (channel.rate_limit_per_user!! > 0 && !await permissions.hasChannelPermissionTo(channel.id, guild.id, account.id, 'MANAGE_CHANNELS') &&
           !await permissions.hasChannelPermissionTo(
-            req.channel.id,
-            req.guild.id,
-            author.id,
-            'MANAGE_CHANNELS',
-          ) &&
-          !await permissions.hasChannelPermissionTo(
-            req.channel.id,
-            req.guild.id,
-            author.id,
+            channel.id,
+            guild.id,
+            account.id,
             'MANAGE_MESSAGES',
           )
         ) {
-          const key = `${author.id}-${channel.id}`;
+          const key = `${account.id}-${channel.id}`;
           const ratelimit = channel.rate_limit_per_user!! * 1000;
           const currentTime = Date.now();
           const lastMessageTimestamp = ctx.slowmodeCache.get(key) || 0;
@@ -409,119 +449,28 @@ router.post(
         } //Slowmode implementation
       }
 
-      const file_details: any[] = [];
-
-      if (req.files) {
-        for (var file of req.files as Express.Multer.File[]) {
-          if (file.size >= ctx.config!.limits['attachments'].max_size) {
-            return res.status(400).json({
-              code: 400,
-              message: `Message attachments cannot be larger than ${ctx.config!.limits['attachments'].max_size} bytes.`,
-            });
-          }
-
-          const file_detail = {
-            id: Snowflake.generate(),
-            size: file.size,
-          } as any;
-
-          file_detail.name = globalUtils
-            .replaceAll(file.originalname, ' ', '_')
-            .replace(/[^A-Za-z0-9_\-.()\[\]]/g, '');
-          file_detail.filename = file_detail.name;
-
-          if (!file_detail.name || file_detail.name == '') {
-            return res.status(403).json({
-              code: 403,
-              message: 'Invalid filename',
-            });
-          }
-
-          const channelDir = join('.', 'www_dynamic', 'attachments', channel.id);
-          const attachmentDir = join(channelDir, file_detail.id);
-          const file_path = join(attachmentDir, file_detail.name);
-
-          file_detail.url = `${globalUtils.config.secure ? 'https' : 'http'}://${globalUtils.config.base_url}${globalUtils.nonStandardPort ? `:${globalUtils.config.port}` : ''}/attachments/${channel.id}/${file_detail.id}/${file_detail.name}`;
-
-          if (!existsSync(attachmentDir)) {
-            mkdirSync(attachmentDir, { recursive: true });
-          }
-
-          writeFileSync(file_path, file.buffer);
-
-          const isVideo = file_path.endsWith('.mp4') || file_path.endsWith('.webm');
-
-          if (isVideo) {
-            try {
-              await new Promise<void>((resolve, reject) => {
-                ffmpeg(file_path)
-                  .on('end', () => {
-                    ffprobe(file_path, (err, metadata) => {
-                      const vid_metadata = metadata.streams.find((x) => x.codec_type === 'video');
-
-                      if (!err && vid_metadata) {
-                        file_detail.width = vid_metadata.width;
-                        file_detail.height = vid_metadata.height;
-                      }
-
-                      resolve();
-                    });
-                  })
-                  .on('error', (err) => {
-                    logText(err, 'error');
-                    reject(err);
-                  })
-                  .screenshots({
-                    count: 1,
-                    timemarks: ['1'],
-                    filename: 'thumbnail.png',
-                    folder: attachmentDir,
-                  });
-              });
-            } catch (error) {
-              file_detail.width = 500;
-              file_detail.height = 500;
-            }
-          } else {
-            const imageExtensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif'];
-            const fileExt = extname(file_detail.name).toLowerCase();
-
-            if (imageExtensions.includes(fileExt)) {
-              try {
-                const image = await Jimp.read(file.buffer);
-                if (image) {
-                  file_detail.width = image.bitmap.width;
-                  file_detail.height = image.bitmap.height;
-                }
-              } catch (error) {
-                file_detail.width = 500;
-                file_detail.height = 500;
-
-                logText(
-                  'Failed to parse image dimension - possible vulnerability attempt?',
-                  'warn',
-                );
-              }
-            } else {
-              file_detail.width = 0;
-              file_detail.height = 0;
-            }
-          }
-
-          file_details.push(file_detail);
-        }
-      }
+      const embeds = processEmbeds(body.embeds); //So... discord removed the ability for users to create embeds in their messages way back in like 2020, killing the whole motive of self bots, but here at Oldcord, we don't care - just don't abuse our API.
+      const file_details = await processAttachments(files as Express.Multer.File[], channel.id);
 
       //Write message
-      const message = await MessageService.createMessage(req.guild?.id ?? null, channel.id, author.id, req.body.content, req.body.nonce, file_details, req.body.tts, mentions_data, embeds);
+      const message = await MessageService.createMessage(
+        guild?.id || null, 
+        channel.id, 
+        account.id, 
+        content, 
+        body.nonce, 
+        file_details, 
+        tts, 
+        mentions_data, 
+        embeds
+      );
 
       if (!message) throw 'Message creation failed';
 
       if (mentions_data.mention_everyone || mentions_data.mention_here) {
-        await MessageService.incrementMentions(channel.id, req.guild.id, mentions_data.mention_here ? 'here' : 'everyone');
+        await MessageService.incrementMentions(channel.id, guild.id, mentions_data.mention_here ? 'here' : 'everyone');
       }
 
-      //Dispatch to correct recipients(s) in DM, group, or guild
       if (channel.recipients) {
         await globalUtils.pingPrivateChannel(channel);
         await dispatcher.dispatchEventInPrivateChannel(channel.id, 'MESSAGE_CREATE', message);
@@ -534,18 +483,11 @@ router.post(
         );
       }
 
-      //Acknowledge immediately to author
-      //gotta do this
-      const tryAck = await MessageService.acknowledgeMessage(
-          author.id,
-          req.channel.id,
-          message.id,
-          0,
-      );
+      const tryAck = await MessageService.acknowledgeMessage(account.id, channel.id, message.id, 0);
 
       if (!tryAck) throw 'Message acknowledgement failed';
 
-      await dispatcher.dispatchEventTo(author.id, 'MESSAGE_ACK', {
+      await dispatcher.dispatchEventTo(account.id, 'MESSAGE_ACK', {
         channel_id: req.channel.id,
         message_id: message.id,
         manual: false, //This is for if someone clicks mark as read
@@ -562,11 +504,11 @@ router.post(
 
 router.delete(
   '/:messageid',
+  messageMiddleware,
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('MANAGE_MESSAGES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.deleteMessage.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.deleteMessage.timeFrame,
+    "deleteMessage"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -608,10 +550,10 @@ router.delete(
 
 router.patch(
   '/:messageid',
+  messageMiddleware,
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateMessage.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateMessage.timeFrame,
+     "updateMessage"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -670,8 +612,7 @@ router.patch(
 );
 
 router.post("/bulk-delete", instanceMiddleware("VERIFIED_EMAIL_REQUIRED"), rateLimitMiddleware(
-  ctx.config!.ratelimit_config.bulkDeleteMessage.maxPerTimeFrame,
-  ctx.config!.ratelimit_config.bulkDeleteMessage.timeFrame
+  "bulkDeleteMessage"
 ), async (req: Request, res: Response) => {
   try {
     const channel = req.channel;
@@ -703,10 +644,10 @@ router.post("/bulk-delete", instanceMiddleware("VERIFIED_EMAIL_REQUIRED"), rateL
 
 router.post(
   '/:messageid/ack',
+  messageMiddleware,
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.ackMessage.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.ackMessage.timeFrame,
+   "ackMessage"
   ),
   async (req: Request, res: Response) => {
     try {

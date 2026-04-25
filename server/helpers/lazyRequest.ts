@@ -3,9 +3,18 @@ import dispatcher from './dispatcher.ts';
 import globalUtils from './globalutils.ts';
 import { GuildService } from '../api/services/guildService.ts';
 import permissions from './permissions.ts';
+import type { WebSocket } from 'ws';
+import type { Session } from '../types/session.ts';
+import type { Guild } from '../types/guild.ts';
+import type { Channel } from '../types/channel.ts';
+import type { Role } from '../types/role.ts';
+import type { Member } from '../types/member.ts';
+import ctx from '../context.ts';
 
 const lazyRequest = {
-  getSortedList: (guild: any): any => {
+  getSortedList: (guild: Guild): Member[] => {
+    if (!guild.members) return [];
+
     return [...guild.members].sort((a, b) => {
       const pA = globalUtils.getUserPresence(a);
       const pB = globalUtils.getUserPresence(b);
@@ -16,7 +25,7 @@ const lazyRequest = {
       return a.user.username.localeCompare(b.user.username);
     });
   },
-  getListId: (session: any, guild: any, channel: any, everyoneRole: any): string => {
+  getListId: (session: Session, guild: Guild, channel: Channel, everyoneRole: Role): string => {
     if (!channel) {
       if (!session.subscriptions) {
         session.subscriptions = {};
@@ -28,7 +37,7 @@ const lazyRequest = {
     }
 
     const READ_MESSAGES = permissions.toObject().READ_MESSAGES;
-    const everyoneOverwrite = channel.permission_overwrites.find((ov) => ov.id === everyoneRole.id);
+    const everyoneOverwrite = channel.permission_overwrites?.find((ov) => ov.id === everyoneRole.id);
 
     let everyoneCanView: any = everyoneRole.permissions & READ_MESSAGES;
 
@@ -36,7 +45,7 @@ const lazyRequest = {
       everyoneCanView = false;
     }
 
-    const otherDenyRules = channel.permission_overwrites.some(
+    const otherDenyRules = channel.permission_overwrites?.some(
       (ov: any) => ov.id !== everyoneRole.id && ov.deny & READ_MESSAGES,
     );
 
@@ -46,7 +55,7 @@ const lazyRequest = {
 
     const perms: string[] = [];
 
-    channel.permission_overwrites.forEach((overwrite: any) => {
+    channel.permission_overwrites?.forEach((overwrite: any) => {
       if (overwrite.allow & READ_MESSAGES) {
         perms.push(`allow:${overwrite.id}`);
       } else if (overwrite.deny & READ_MESSAGES) {
@@ -60,17 +69,17 @@ const lazyRequest = {
 
     return murmur3(perms.sort().join(','), 0).toString();
   },
-  computeMemberList: (guild: any, channel: any, ranges: any, bypassPerms = false): any => {
-    function arrayPartition(array: any, callback: any) {
+  computeMemberList: (guild: Guild, channel: Channel, ranges: [number, number], bypassPerms = false): any => {
+    function arrayPartition<T>(array: T[], callback: (elem: T) => boolean): [T[], T[]] {
       return array.reduce(
-        ([pass, fail], elem) => {
+        ([pass, fail], elem): [T[], T[]] => {
           return callback(elem) ? [[...pass, elem], fail] : [pass, [...fail, elem]];
         },
-        [[], []],
+        [[], []] as [T[], T[]],
       );
     }
 
-    function formatMemberItem(member: any, forcedStatus: any = null) {
+    function formatMemberItem(member: Member, forcedStatus: string | null = null) {
       const p = globalUtils.getUserPresence(member);
       if (forcedStatus != null) p.status = forcedStatus;
 
@@ -82,14 +91,14 @@ const lazyRequest = {
       };
     }
 
-    const visibleMembers = guild.members.filter((m) => {
+    const visibleMembers = guild.members?.filter((m) => {
       return (
-        permissions.hasChannelPermissionTo(channel, guild, m.id, 'READ_MESSAGES') ||
+        permissions.hasChannelPermissionTo(channel.id, guild.id, m.id, 'READ_MESSAGES') ||
         bypassPerms
       );
     });
 
-    const sortedMembers = [...visibleMembers].sort((a, b) => {
+    const sortedMembers = [...visibleMembers!!].sort((a, b) => {
       const pA = globalUtils.getUserPresence(a);
       const pB = globalUtils.getUserPresence(b);
       const statusA = pA?.status && pA.status !== 'offline' ? 1 : 0;
@@ -107,7 +116,7 @@ const lazyRequest = {
       .sort((a, b) => b.position - a.position);
 
     hoistedRoles.forEach((role: any) => {
-      const [roleMembers, others] = arrayPartition(remainingMembers, (m) => {
+      const [roleMembers, others] = arrayPartition(remainingMembers, (m: Member) => {
         if (placedUserIds.has(m.user.id)) return false;
 
         const p = globalUtils.getUserPresence(m);
@@ -120,7 +129,7 @@ const lazyRequest = {
         groups.push(group);
         allItems.push({ group });
 
-        roleMembers.forEach((m) => {
+        roleMembers.forEach((m: Member) => {
           allItems.push(formatMemberItem(m));
           placedUserIds.add(m.user.id);
         });
@@ -129,7 +138,7 @@ const lazyRequest = {
       remainingMembers = others;
     });
 
-    const [onlineLeft, others] = arrayPartition(remainingMembers, (m) => {
+    const [onlineLeft, others] = arrayPartition(remainingMembers, (m: Member) => {
       if (placedUserIds.has(m.user.id)) return false;
 
       const p = globalUtils.getUserPresence(m);
@@ -140,7 +149,7 @@ const lazyRequest = {
       groups.push({ id: 'online', count: onlineLeft.length });
       allItems.push({ group: { id: 'online', count: onlineLeft.length } });
 
-      onlineLeft.forEach((m) => {
+      onlineLeft.forEach((m: Member) => {
         allItems.push(formatMemberItem(m));
         placedUserIds.add(m.user.id);
       });
@@ -161,7 +170,7 @@ const lazyRequest = {
     }
 
     const syncOps = ranges.map((range) => {
-      const [startIndex, endIndex] = range;
+      const [startIndex, endIndex] = range as any;
 
       return {
         op: 'SYNC',
@@ -174,7 +183,7 @@ const lazyRequest = {
       ops: syncOps,
       groups: groups,
       items: allItems,
-      count: visibleMembers.length,
+      count: visibleMembers?.length,
     };
   },
   clearGuildSubscriptions: (session: any, guildId: string) => {
@@ -190,14 +199,14 @@ const lazyRequest = {
       }
     }
   },
-  handleMembersSync: (session: any, channel: any, guild: any, subData: any) => {
+  handleMembersSync: (session: Session, channel: Channel, guild: Guild, subData: any) => {
     if (!subData || !subData.ranges) return;
 
     const list_id = lazyRequest.getListId(
       session,
       guild,
       channel,
-      guild.roles.find((x) => x.id === guild.id),
+      guild.roles?.find((x: Role) => x.id === guild.id)!!,
     );
 
     const { ops, groups, items, count } = lazyRequest.computeMemberList(
@@ -207,8 +216,8 @@ const lazyRequest = {
     );
 
     const onlineCount = groups
-      .filter((g) => g.id === 'online' || guild.roles.some((r) => r.id === g.id && r.hoist))
-      .reduce((acc, g) => acc + g.count, 0);
+      .filter((g: any) => g.id === 'online' || guild.roles?.some((r: Role) => r.id === g.id && r.hoist))
+      .reduce((acc: any, g: any) => acc + g.count, 0);
 
     if (!session.memberListCache) {
       session.memberListCache = {};
@@ -225,7 +234,7 @@ const lazyRequest = {
       online_count: onlineCount,
     });
   },
-  syncMemberList: async (guild: any, user_id: string) => {
+  syncMemberList: async (guild: Guild, user_id: string) => {
     await dispatcher.dispatchEventInGuildToThoseSubscribedTo(
       guild.id,
       'LIST_RELOAD',
@@ -236,7 +245,7 @@ const lazyRequest = {
         if (!guildSubs) return null;
 
         for (const [channelId, subData] of Object.entries(guildSubs) as any[][]) {
-          const channel = guild.channels.find((x) => x.id === channelId);
+          const channel = guild.channels?.find((x) => x.id === channelId);
           if (!channel) continue;
 
           const {
@@ -248,16 +257,16 @@ const lazyRequest = {
             otherSession,
             guild,
             channel,
-            guild.roles.find((x) => x.id === guild.id),
+            guild.roles?.find((x) => x.id === guild.id)!!,
           );
           const totalOnline = groups
-            .filter((g) => g.id !== 'offline')
-            .reduce((acc, g) => acc + g.count, 0);
+            .filter((g: any) => g.id !== 'offline')
+            .reduce((acc: any, g: any) => acc + g.count, 0);
 
           let ops: any = [];
 
-          if (ctx.config!.sync_only) {
-            ops = subData.ranges.map((range) => {
+          if (ctx.config!.instance.flags.includes("SYNC_ONLY")) {
+            ops = subData.ranges.map((range: [number, number]) => {
               return {
                 op: 'SYNC',
                 range: range,
@@ -269,11 +278,11 @@ const lazyRequest = {
             if (!oldItems) continue;
 
             const oldIndex = oldItems.findIndex(
-              (item) =>
+              (item: any) =>
                 item.member && (item.member.id === user_id || item.member.user?.id === user_id),
             );
             const newIndex = newItems.findIndex(
-              (item) =>
+              (item: any) =>
                 item.member && (item.member.id === user_id || item.member.user?.id === user_id),
             );
 
@@ -291,8 +300,8 @@ const lazyRequest = {
               }
 
               indicesToDelete
-                .sort((a, b) => b - a)
-                .forEach((idx) => ops.push({ op: 'DELETE', index: idx }));
+                .sort((a: number, b: number) => b - a)
+                .forEach((idx: number) => ops.push({ op: 'DELETE', index: idx }));
 
               if (newIndex !== -1) {
                 if (
@@ -328,8 +337,8 @@ const lazyRequest = {
       false,
       'GUILD_MEMBER_LIST_UPDATE',
     );
-  },
-  fire: async (socket, packet) => {
+  }, //GatewayMemberChunksPacket
+  fire: async (socket: WebSocket, packet: any) => {
     if (!socket.session) return;
 
     const { guild_id, channels, members: memberIds } = packet.d;

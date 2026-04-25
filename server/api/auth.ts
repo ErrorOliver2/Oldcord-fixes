@@ -15,8 +15,7 @@ router.post(
   '/register',
   instanceMiddleware('NO_REGISTRATION'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -150,8 +149,7 @@ router.post(
 router.post(
   '/login',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -175,13 +173,6 @@ router.post(
 
       const result = await AuthService.login(req.body, req.headers['referer']);
 
-      if ('token' in result) {
-          if (result.is_staff) {
-              req.is_staff = true;
-              req.staff_details = result.staff_details!!;
-          }
-      }
-
       return res.status(200).json(result);
     } catch (error: any) {
       if (error.status) {
@@ -198,8 +189,7 @@ router.post(
 router.post(
   '/mfa/totp',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -256,8 +246,7 @@ router.post(
 router.post(
   '/logout',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration"
   ),
   async (_req: Request, res: Response) => {
     return res.status(204).send();
@@ -267,8 +256,7 @@ router.post(
 router.post(
   '/forgot',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -322,8 +310,7 @@ router.post('/fingerprint', (_req: Request, res: Response) => {
 router.post(
   '/verify',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -399,8 +386,7 @@ router.post(
 router.post(
   '/verify/resend',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration",
   ),
   async (req: Request, res: Response) => {
     try {

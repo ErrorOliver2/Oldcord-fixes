@@ -34,7 +34,8 @@ async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) 
       flags: true,
       id: true,
       bot: true,
-      settings: true
+      settings: true,
+      email: true
     }
   })
 
@@ -294,6 +295,7 @@ async function getGuildMembersAndPresences(guild_id: string): Promise<{ members:
         mute: row.mute,
         roles: member_roles,
         joined_at: row.joined_at,
+        id: row.user.id
       };
 
       const sessions = ctx.userSessions?.get(row.user_id);
@@ -403,7 +405,8 @@ async function handleResume(socket: WebSocket, packet: GatewayResumePacket) {
       flags: true,
       id: true,
       bot: true,
-      settings: true
+      settings: true,
+      email: true
     }
   })
 

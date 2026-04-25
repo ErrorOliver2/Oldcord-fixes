@@ -34,7 +34,7 @@ class Twitch {
       return null;
     }
   }
-  async getUser(access_token): Promise<any | null> {
+  async getUser(access_token: string): Promise<any | null> {
     if (!twitchConfig) return null;
 
     const options = {

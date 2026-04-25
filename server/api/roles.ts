@@ -4,7 +4,7 @@ import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { guildPermissionsMiddleware, rateLimitMiddleware, roleMiddleware } from '../helpers/middlewares.ts';
 import { RoleService } from './services/roleService.ts';
 import type { Request, Response } from "express";
 import type { User } from '../types/user.ts';
@@ -13,7 +13,7 @@ import ctx from '../context.ts';
 
 const router = Router({ mergeParams: true });
 
-router.get('/:roleid', async (req: Request, res: Response) => {
+router.get('/:roleid', roleMiddleware, async (req: Request, res: Response) => {
   return res.status(200).json(req.role);
 });
 
@@ -21,9 +21,9 @@ router.patch(
   '/:roleid',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateRole.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateRole.timeFrame,
+    "updateRole"
   ),
+  roleMiddleware,
   async (req: Request, res: Response) => {
     try {
       const guild = req.guild;
@@ -87,9 +87,9 @@ router.delete(
   '/:roleid',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.deleteRole.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.deleteRole.timeFrame,
+     "deleteRole"
   ),
+  roleMiddleware,
   async (req: Request, res: Response) => {
     try {
       const guild = req.guild;
@@ -135,8 +135,7 @@ router.patch(
   '/',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateRole.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.createRole.timeFrame,
+    "updateRole"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -194,8 +193,7 @@ router.post(
   '/',
   guildPermissionsMiddleware('MANAGE_ROLES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.createRole.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.createRole.timeFrame,
+    "createRole"
   ),
   async (req: Request, res: Response) => {
     try {

@@ -11,6 +11,7 @@ import {
   guildPermissionsMiddleware,
   instanceMiddleware,
   rateLimitMiddleware,
+  recipientMiddleware,
 } from '../helpers/middlewares.ts';
 import messages from './messages.js';
 import pins from './pins.js';
@@ -41,12 +42,11 @@ router.get(
 
 router.post(
   '/:channelid/typing',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('SEND_MESSAGES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.typing.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.typing.timeFrame,
+     "typing"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -66,7 +66,15 @@ router.post(
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
         }
 
-        payload.member = globalUtils.miniUserObject(account);
+        payload.member = {
+          id: account.id,
+          joined_at: new Date().toISOString(),
+          deaf: false,
+          mute: false,
+          nick: null,
+          roles: [],
+          user: globalUtils.miniUserObject(account)
+        }
 
         await dispatcher.dispatchEventInPrivateChannel(channel.id, 'TYPING_START', payload);
       } else {
@@ -84,12 +92,11 @@ router.post(
 
 router.patch(
   '/:channelid',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('MANAGE_CHANNELS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateChannel.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateChannel.timeFrame,
+     "updateChannel"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -170,7 +177,7 @@ router.patch(
       }
 
       await dispatcher.dispatchEventToAllPerms(
-        channel.guild_id,
+        channel.guild_id!!,
         channel.id,
         'READ_MESSAGES',
         'CHANNEL_UPDATE',
@@ -188,8 +195,8 @@ router.patch(
 
 router.get(
   '/:channelid/invites',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('MANAGE_CHANNELS'),
   cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
@@ -257,8 +264,8 @@ router.post(
 
 router.post(
   '/:channelid/invites',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('CREATE_INSTANT_INVITE'),
   async (req: Request, res: Response) => {
     try {
@@ -282,11 +289,11 @@ router.post(
         });
       }
 
-      let max_age = req.body.max_age ?? 0;
-      let max_uses = req.body.max_uses ?? 0;
-      let temporary = req.body.xkcdpass ?? false;
-      let xkcdpass = req.body.temporary ?? false;
-      let regenerate = req.body.regenerate ?? true;
+      let max_age = Number(req.body.max_age) || 0;
+      let max_uses = Number(req.body.max_uses) || 0;
+      let temporary = Boolean(req.body.temporary) ?? false;
+      let xkcdpass = Boolean(req.body.xkcdpass) ?? false;
+      let regenerate = Boolean(req.body.regenerate) ?? true;
 
       const invite = await InviteService.createInvite(
         guild.id,
@@ -316,8 +323,8 @@ router.use('/:channelid/messages', channelMiddleware, messages);
 
 router.get(
   '/:channelid/webhooks',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
@@ -336,8 +343,8 @@ router.get(
 
 router.post(
   '/:channelid/webhooks',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelPermissionsMiddleware('MANAGE_WEBHOOKS'),
   async (req: Request, res: Response) => {
     try {
@@ -373,8 +380,8 @@ router.post(
 
 router.put(
   '/:channelid/permissions/:id',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   guildPermissionsMiddleware('MANAGE_ROLES'),
   async (req: Request, res: Response) => {
     try {
@@ -451,11 +458,7 @@ router.put(
 
       await ChannelService.updateChannelPermissionOverwrites(channel.id, overwrites);
 
-      channel = await ChannelService.getChannelById(channel.id); //do this better
-
-      if (!req.channel_types_are_ints) {
-        channel.type = channel.type == ChannelType.VOICE ? 'voice' : 'text';
-      }
+      channel.permission_overwrites = overwrites;
 
       await dispatcher.dispatchEventInChannel(req.guild.id, channel.id, 'CHANNEL_UPDATE', channel);
       await lazyRequest.syncMemberList(req.guild, req.account.id); //do this just in case they deny/allow everyone to view a previously locked off/just unlocked channel
@@ -471,8 +474,8 @@ router.put(
 
 router.delete(
   '/:channelid/permissions/:id',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   guildPermissionsMiddleware('MANAGE_ROLES'),
   async (req: Request, res: Response) => {
     try {
@@ -527,16 +530,17 @@ router.delete(
 //TODO: should have its own rate limit
 router.put(
   '/:channelid/recipients/:recipientid',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateMember.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateMember.timeFrame,
+     "updateMember"
   ),
+  recipientMiddleware,
   async (req: Request, res: Response) => {
     try {
       const sender = req.account;
       const channel = req.channel;
+      const recipient = req.recipient;
 
       if (channel.type !== ChannelType.GROUPDM) {
         return res.status(403).json({
@@ -556,12 +560,6 @@ router.put(
         });
       }
 
-      const recipient = req.recipient;
-
-      if (recipient == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_USER);
-      }
-
       if (!globalUtils.areWeFriends(sender.id, recipient.id)) {
         return res.status(403).json({
           code: 403,
@@ -572,7 +570,7 @@ router.put(
       //Add recipient
       channel.recipients.push(recipient);
 
-      if (!(await ChannelService.updateChannelRecipients(channel.id, channel.recipients)))
+      if (!(await ChannelService.updateChannelRecipients(channel.id, channel.recipients.map((recipient) => recipient.id))))
         throw 'Failed to update recipients list in channel';
 
       //Notify everyone else
@@ -601,16 +599,17 @@ router.put(
 
 router.delete(
   '/:channelid/recipients/:recipientid',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateMember.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateMember.timeFrame,
+    "updateMember"
   ),
+  recipientMiddleware,
   async (req: Request, res: Response) => {
     try {
       const sender = req.account;
       const channel = req.channel;
+      const recipient = req.recipient;
 
       if (channel.type !== ChannelType.GROUPDM) {
         return res.status(403).json({
@@ -623,20 +622,14 @@ router.delete(
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
       }
 
-      const recipient = req.recipient;
-
-      if (recipient == null) {
-        return res.status(404).json(errors.response_404.UNKNOWN_USER);
-      }
-
       //Remove recipient
       channel.recipients = channel.recipients?.filter((recip) => recip.id !== recipient.id);
 
-      if (!(await ChannelService.updateChannelRecipients(channel.id, channel.recipients!!)))
+      if (!(await ChannelService.updateChannelRecipients(channel.id, channel.recipients!!.map((recipient) => recipient.id))))
         throw 'Failed to update recipients list in channel';
 
       //Notify everyone else
-      await dispatcher.dispatchEventInPrivateChannel(channel.id, 'CHANNEL_UPDATE', function (socket) {
+      await dispatcher.dispatchEventInPrivateChannel(channel.id, 'CHANNEL_UPDATE', function (socket: WebSocket) {
         return globalUtils.personalizeChannelObject(socket, channel);
       });
 
@@ -657,12 +650,11 @@ router.delete(
 
 router.delete(
   '/:channelid',
-  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   channelMiddleware,
+  instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   guildPermissionsMiddleware('MANAGE_CHANNELS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.deleteChannel.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.deleteChannel.timeFrame,
+    "deleteChannel"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -715,7 +707,7 @@ router.delete(
           channel.recipients = newRecipientsList;
 
           //handover logic
-          if (channel.owner_id === sender.id && newRecipientsList.length > 0) {
+          if (channel.owner_id === sender.id && newRecipientsList!.length > 0) {
             const newOwnerId = newRecipientsList!![0].id;
 
             channel.owner_id = newOwnerId;
@@ -723,15 +715,15 @@ router.delete(
             if (!(await ChannelService.updateChannel(channel.id, channel, true))) {
               throw 'Failed to transfer ownership of group channel';
             }
-          } else if (newRecipientsList.length === 0) {
+          } else if (newRecipientsList!.length === 0) {
             await ChannelService.deleteChannel(channel.id);
             return res.status(204).send(); //delete group channel to free up the db
           }
 
-          if (!(await ChannelService.updateChannelRecipients(channel.id, newRecipientsList!!)))
+          if (!(await ChannelService.updateChannelRecipients(channel.id, newRecipientsList?.map((recipient) => recipient.id)!!)))
             throw 'Failed to update recipients list in channel';
 
-          await dispatcher.dispatchEventInPrivateChannel(channel.id, 'CHANNEL_UPDATE', function (socket) {
+          await dispatcher.dispatchEventInPrivateChannel(channel.id, 'CHANNEL_UPDATE', function (socket: WebSocket) {
             return globalUtils.personalizeChannelObject(socket, channel);
           });
         }
@@ -766,10 +758,10 @@ router.delete(
 
 router.use(
   '/:channelid/pins',
+  channelMiddleware,
   instanceMiddleware('VERIFIED_EMAIL_REQUIRED'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.pins.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.pins.timeFrame,
+    "pins"
   ),
   pins
 );

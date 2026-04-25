@@ -53,7 +53,7 @@ class VoiceRoom {
       });
     }
 
-    client.consumers?.forEach((consumer) => consumer.close());
+    client.consumers?.forEach((consumer: any) => consumer.close());
     client.audioProducer?.close();
     client.videoProducer?.close();
     client.transport?.close();

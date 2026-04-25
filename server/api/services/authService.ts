@@ -9,7 +9,6 @@ import type { AccountRegisterPayload } from "../../types/requests/accountRegiste
 import type { User } from "../../types/user.ts";
 import type { LoginSuccessResponse } from "../../types/responses/loginSuccessResponse.ts";
 import type { LoginMFARequiredResponse } from "../../types/responses/loginMFARequiredResponse.ts";
-import type { StaffDetails } from "../../types/staff.ts";
 import { logText } from "../../helpers/logger.ts";
 import ctx from "../../context.ts";
 
@@ -153,9 +152,7 @@ export const AuthService = {
 
         return {
             token: user.token!!,
-            settings: {},
-            is_staff: !!user.staff,
-            staff_details: user.staff ? (user.staff as unknown as StaffDetails) : null
+            settings: {}
         };
     }
 };

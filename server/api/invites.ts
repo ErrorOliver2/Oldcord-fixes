@@ -4,7 +4,7 @@ import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { cacheForMiddleware, instanceMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, instanceMiddleware, rateLimitMiddleware, inviteMiddleware } from '../helpers/middlewares.ts';
 import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import { MessageService } from './services/messageService.ts';
@@ -15,7 +15,7 @@ import { GuildService } from './services/guildService.ts';
 const router = Router({ mergeParams: true });
 
 //We wont cache stuff like this for everyone because if theyre banned we want the invite to be invalid only for them.
-router.get('/:code', cacheForMiddleware(60 * 30, "private", false), async (req: Request, res: Response) => {
+router.get('/:code', inviteMiddleware, cacheForMiddleware(60 * 30, "private", false), async (req: Request, res: Response) => {
   try {
     const invite = req.invite;
 
@@ -33,9 +33,9 @@ router.get('/:code', cacheForMiddleware(60 * 30, "private", false), async (req: 
 
 router.delete(
   '/:code',
+  inviteMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.deleteInvite.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.deleteInvite.timeFrame,
+   "deleteInvite"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -77,9 +77,9 @@ router.delete(
 router.post(
   '/:code',
   instanceMiddleware('NO_INVITE_USE'),
+  inviteMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.useInvite.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.useInvite.timeFrame,
+    "useInvite"
   ),
   async (req: Request, res: Response) => {
     try {

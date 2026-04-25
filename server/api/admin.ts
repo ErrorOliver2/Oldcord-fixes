@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import type { Prisma } from '../generated/prisma/client/client.ts';
 
 import { logText } from '../helpers/logger.ts';
-import { staffAccessMiddleware } from '../helpers/middlewares.ts';
+import { staffAccessMiddleware, userMiddleware } from '../helpers/middlewares.ts';
 const router = Router({ mergeParams: true });
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -358,7 +358,7 @@ router.delete('/guilds/:guildid', staffAccessMiddleware(3), async (req: Request,
   }
 });
 
-router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), async (req: Request, res: Response) => {
+router.post('/users/:userid/moderate/disable', staffAccessMiddleware(3), userMiddleware, async (req: Request, res: Response) => {
   try {
     const user = req.user;
 
@@ -665,7 +665,7 @@ router.post('/staff/:userid', staffAccessMiddleware(4), async (req: Request, res
   }
 });
 
-router.delete('/staff/:userid', staffAccessMiddleware(4), async (req: Request, res: Response) => {
+router.delete('/staff/:userid', staffAccessMiddleware(4), userMiddleware, async (req: Request, res: Response) => {
   try {
     const user = req.user;
 
@@ -697,7 +697,7 @@ router.delete('/staff/:userid', staffAccessMiddleware(4), async (req: Request, r
   }
 });
 
-router.delete('/staff/:userid/audit-logs', staffAccessMiddleware(4), async (req: Request, res: Response) => {
+router.delete('/staff/:userid/audit-logs', staffAccessMiddleware(4), userMiddleware, async (req: Request, res: Response) => {
   try {
     const user = req.user;
 
@@ -898,7 +898,7 @@ router.delete('/messages/:messageid', staffAccessMiddleware(2), async (req: Requ
   }
 });
 
-router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), async (req: Request, res: Response) => {
+router.post('/users/:userid/moderate/delete', staffAccessMiddleware(3), userMiddleware, async (req: Request, res: Response) => {
   try {
     const user = req.user as User;
 

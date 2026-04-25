@@ -2,7 +2,7 @@ import { Router } from 'express';
 
 import globalUtils, { generateString } from '../../../helpers/globalutils.ts';
 import { logText } from '../../../helpers/logger.ts';
-import { cacheForMiddleware, rateLimitMiddleware } from '../../../helpers/middlewares.ts';
+import { applicationMiddleware, cacheForMiddleware, rateLimitMiddleware, userMiddleware } from '../../../helpers/middlewares.ts';
 import type { Request, Response } from "express";
 
 const router = Router();
@@ -62,8 +62,7 @@ router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Reques
 router.patch(
   '/',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateMe.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateMe.timeFrame,
+    "updateMe",
   ),
   async (req: Request, res: Response) => {
     try {
@@ -537,7 +536,7 @@ router.patch(/\/settings-proto\/.*/, async (_req: Request, res: Response) => {
   }
 });
 
-router.put('/notes/:userid', async (req: Request, res: Response) => {
+router.put('/notes/:userid', userMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const user = req.user;
@@ -618,7 +617,7 @@ router.get('/activities', (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
-router.get('/applications/:applicationid/entitlements', (_req: Request, res: Response) => {
+router.get('/applications/:applicationid/entitlements', applicationMiddleware, (_req: Request, res: Response) => {
   return res.status(200).json([]);
 });
 
@@ -663,9 +662,8 @@ router.get('/affinities/guilds', (_req: Request, res: Response) => {
 router.post(
   '/mfa/totp/enable',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
-  ),
+    "registration",
+  ), //Needs to use its own RL
   async (req: Request, res: Response) => {
     try {
       const code = req.body.code;
@@ -754,8 +752,7 @@ router.post(
 router.post(
   '/mfa/totp/disable',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.registration.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.registration.timeFrame,
+    "registration",
   ),
   async (req: Request, res: Response) => {
     try {

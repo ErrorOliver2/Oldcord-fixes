@@ -8,7 +8,7 @@ import { AccountService } from '../services/accountService.ts';
 import { RelationshipService } from '../services/relationshipService.ts';
 import { RelationshipType } from '../../types/relationship.ts';
 import type { Account } from '../../types/account.ts';
-import { cacheForMiddleware } from '../../helpers/middlewares.ts';
+import { cacheForMiddleware, userMiddleware } from '../../helpers/middlewares.ts';
 
 const router = Router();
 
@@ -30,7 +30,7 @@ router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Reques
   }
 });
 
-router.delete('/:userid', async (req: Request, res: Response) => {
+router.delete('/:userid', userMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
 
@@ -78,7 +78,7 @@ router.delete('/:userid', async (req: Request, res: Response) => {
   }
 });
 
-router.put('/:userid', async (req: Request, res: Response) => {
+router.put('/:userid', userMiddleware, async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const user = req.user;

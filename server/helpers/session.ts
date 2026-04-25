@@ -15,10 +15,11 @@ import { GuildService } from '../api/services/guildService.ts';
 import type { Member } from '../types/member.ts';
 import type { User } from '../types/user.ts';
 import type { Session } from '../types/session.ts';
-import type { Relationship } from '../types/relationship.ts';
+
 import permissions from './permissions.ts';
 import ctx from '../context.ts';
 import type { Guild } from '../types/guild.ts';
+import { RelationshipService } from '../api/services/relationshipService.ts';
 
 let erlpack: any = null;
 
@@ -26,7 +27,7 @@ try {
   const erlpackModule = await import('erlpack');
   erlpack = erlpackModule.default || erlpackModule;
 } catch (e) {
-  logText('erlpack is not installed, desktop clients will not be able to connect.', 'warning');
+  console.info('erlpack is not installed, desktop clients will not be able to connect.');
   erlpack = null;
 }
 
@@ -47,7 +48,6 @@ class session implements Session {
   public unavailable_guilds: any[];
   public presences: any[];
   public read_states: any[];
-  public relationships: Relationship[];
   public guildCache: Guild[];
   public apiVersion: number;
   public application: any;
@@ -97,7 +97,6 @@ class session implements Session {
     this.unavailable_guilds = [];
     this.presences = [];
     this.read_states = [];
-    this.relationships = [];
     this.subscriptions = {};
     this.memberListCache = {};
     this.guildCache = [];
@@ -252,7 +251,11 @@ class session implements Session {
         members: { some: { user_id: this.user.id } }
       },
       include: {
-        members: { where: { user_id: this.user.id } }
+        members: { 
+          include: { user: true }
+        },
+        channels: true,
+        roles: true
       }
     });
 
@@ -282,7 +285,11 @@ class session implements Session {
         members: { some: { user_id: this.user.id } }
       },
       include: {
-        members: { where: { user_id: this.user.id } }
+        members: { 
+          include: { user: true }
+        },
+        roles: true,
+        channels: true
       }
     });
 
@@ -408,7 +415,7 @@ class session implements Session {
       }
 
       this.dispatch('RESUMED', {
-        _trace: [JSON.stringify(['oldcord-v3', { micros: 0, calls: ['oldcord-v3'] }])],
+        _trace: [JSON.stringify(['oldcord-v4', { micros: 0, calls: ['oldcord-v4'] }])],
       });
 
       this.updatePresence('online', null, false);
@@ -429,12 +436,28 @@ class session implements Session {
           members: { some: { user_id: this.user.id } }
         },
         include: {
-          members: { where: { user_id: this.user.id } }
+          members: { where: { user_id: this.user.id } },
+          channels: true
         }
       });
 
-      let guilds = guilds_rows.map((guild) => {
-        return GuildService._formatResponse(guild)
+      let guilds = guilds_rows.map((guild_row) => {
+        const formatted = GuildService._formatResponse(guild_row);
+        const hasEveryone = formatted.roles!.some(r => r.id === formatted.id);
+
+        if (!hasEveryone) {
+          formatted.roles!.push({
+            id: formatted.id,
+            name: "@everyone",
+            permissions: 104186945,
+            position: 0,
+            color: 0,
+            hoist: false,
+            mentionable: false
+          });
+        }
+
+        return formatted;
       });
 
       if (this.user.bot) {
@@ -551,6 +574,8 @@ class session implements Session {
 
           merged_members.push(...formattedMembers);
 
+          console.log(guild);
+          console.log(guild.channels);
           for (let channel of guild.channels!!) {
             if ((year === 2017 && month < 9) || year < 2017) {
               if (channel.type === ChannelType.CATEGORY) {
@@ -681,8 +706,8 @@ class session implements Session {
       const connectedAccounts = await AccountService.getConnectedAccounts(this.user.id);
       const guildSettings = this.user.guild_settings;
       const notes = await AccountService.getNotes(this.user.id);
+      const relationships = await RelationshipService.getRelationshipsByUserId(this.user.id);
 
-      this.relationships = this.user.relationships;
       this.application = await OAuthService.getApplicationById(this.user.id);
 
       this.readyUp({
@@ -690,7 +715,7 @@ class session implements Session {
         guilds: guilds ?? [],
         presences: this.presences ?? [],
         private_channels: filteredDMs,
-        relationships: this.relationships ?? [],
+        relationships: relationships ?? [],
         read_state:
           this.apiVersion >= 9
             ? { entries: this.read_states ?? [], partial: false, version: 1 }
@@ -737,7 +762,7 @@ class session implements Session {
         notification_settings: { flags: null },
         game_relationships: [{}],
         application: this.application,
-        _trace: [JSON.stringify(['oldcord-v3', { micros: 0, calls: ['oldcord-v3'] }])],
+        _trace: [JSON.stringify(['oldcord-v4', { micros: 0, calls: ['oldcord-v4'] }])],
       });
 
       for (let guild of this.unavailable_guilds) {

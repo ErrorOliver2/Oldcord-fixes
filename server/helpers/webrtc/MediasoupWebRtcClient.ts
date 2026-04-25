@@ -25,7 +25,7 @@ class MediasoupWebRtcClient {
   public incomingSSRCS: any;
   public videoStream: any;
 
-  constructor(userId, roomId, websocket, room) {
+  constructor(userId: string, roomId: string, websocket: WebSocket, room: VoiceRoom) {
     this.user_id = userId;
     this.voiceRoomId = roomId;
     this.websocket = websocket;

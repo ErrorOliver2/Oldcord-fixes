@@ -6,13 +6,11 @@ import { rateLimitMiddleware } from '../helpers/middlewares.ts';
 import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import { generate } from '../helpers/snowflake.ts';
-import ctx from '../context.ts';
 
 router.post(
   '/',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.reports.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.reports.timeFrame,
+    "reports"
   ),
   async (req: Request, res: Response) => {
     try {

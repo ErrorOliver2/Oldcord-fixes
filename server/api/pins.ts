@@ -3,7 +3,7 @@ import { Router } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
-import { cacheForMiddleware, channelMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, messageMiddleware } from '../helpers/middlewares.ts';
 import type { Response, Request } from "express";
 import { prisma } from '../prisma.ts';
 import { MessageService } from './services/messageService.ts';
@@ -12,7 +12,7 @@ import { ChannelType } from '../types/channel.ts';
 
 const router = Router({ mergeParams: true });
 
-router.get('/', channelMiddleware, cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
+router.get('/', cacheForMiddleware(60 * 5, "private", false), async (req: Request, res: Response) => {
   try {
     const channel = req.channel;
     const pinned_messages = await prisma.message.findMany({
@@ -32,7 +32,7 @@ router.get('/', channelMiddleware, cacheForMiddleware(60 * 5, "private", false),
   }
 });
 
-router.put('/:messageid', channelMiddleware, async (req: Request, res: Response) => {
+router.put('/:messageid', messageMiddleware, async (req: Request, res: Response) => {
   try {
     const channel = req.channel;
     const message = req.message;
@@ -87,7 +87,7 @@ router.put('/:messageid', channelMiddleware, async (req: Request, res: Response)
   }
 });
 
-router.delete('/:messageid', channelMiddleware, async (req: Request, res: Response) => {
+router.delete('/:messageid', messageMiddleware, async (req: Request, res: Response) => {
   try {
     const channel = req.channel;
     const message = req.message;
@@ -122,7 +122,7 @@ router.delete('/:messageid', channelMiddleware, async (req: Request, res: Respon
   }
 });
 
-router.post('/ack', channelMiddleware, async (req: Request, res: Response) => {
+router.post('/ack', async (req: Request, res: Response) => {
   try {
     const userId = req.account.id;
     const channelId = req.channel.id;

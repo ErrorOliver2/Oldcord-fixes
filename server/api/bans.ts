@@ -3,13 +3,12 @@ import { Router } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { cacheForMiddleware, guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, guildPermissionsMiddleware, memberMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
 const router = Router({ mergeParams: true });
 import errors from '../helpers/errors.ts';
 import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import type { User } from '../types/user.ts';
-import ctx from '../context.ts';
 
 //to-do move to use a service
 
@@ -49,10 +48,10 @@ router.get(
 
 router.put(
   '/:memberid',
+  memberMiddleware,
   guildPermissionsMiddleware('BAN_MEMBERS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.bans.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.bans.timeFrame,
+     "bans"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -162,11 +161,12 @@ router.put(
 
 router.delete(
   '/:memberid',
+  memberMiddleware,
   guildPermissionsMiddleware('BAN_MEMBERS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.bans.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.bans.timeFrame,
+    "bans"
   ),
+  memberMiddleware,
   async (req: Request, res: Response) => {
     try {
       const sender = req.account;

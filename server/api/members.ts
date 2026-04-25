@@ -6,12 +6,13 @@ import errors from '../helpers/errors.ts';
 import globalUtils from '../helpers/globalutils.ts';
 import lazyRequest from '../helpers/lazyRequest.js';
 import { logText } from '../helpers/logger.ts';
-import { cacheForMiddleware, guildPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.js';
+import { cacheForMiddleware, guildPermissionsMiddleware, rateLimitMiddleware, memberMiddleware } from '../helpers/middlewares.js';
 import { GuildService } from './services/guildService.ts';
 import { RoleService } from './services/roleService.ts';
 import type { User } from '../types/user.ts';
 import type { Member } from '../types/member.ts';
 import ctx from '../context.ts';
+import type { Guild } from '../types/guild.ts';
 
 interface ErrorReponse {
   code: number;
@@ -20,16 +21,16 @@ interface ErrorReponse {
 
 const router = Router({ mergeParams: true });
 
-router.get('/:memberid', cacheForMiddleware(60 * 30, "private", false), async (req: Request, res: Response) => {
+router.get('/:memberid', memberMiddleware, cacheForMiddleware(60 * 30, "private", false), async (req: Request, res: Response) => {
   return res.status(200).json(req.member);
 });
 
 router.delete(
   '/:memberid',
+  memberMiddleware,
   guildPermissionsMiddleware('KICK_MEMBERS'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.kickMember.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.kickMember.timeFrame,
+    "kickMember"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -66,7 +67,7 @@ router.delete(
   },
 );
 
-async function updateMember(member: Member, guild_id: string, roles?: (string | { id: string })[], nick?: string) {
+async function updateMember(guild: Guild, member: Member, roles?: (string | { id: string })[], nick?: string) {
   let rolesChanged = false;
   let nickChanged = false;
 
@@ -79,7 +80,7 @@ async function updateMember(member: Member, guild_id: string, roles?: (string | 
     if (JSON.stringify(currentRoles) !== JSON.stringify(incomingRoles)) {
       rolesChanged = true;
 
-      const success = await RoleService.setRoles(guild_id, newRoles, member.id!!);
+      const success = await RoleService.setRoles(guild.id, newRoles, member.id!!);
 
       if (!success) {
         return errors.response_500.INTERNAL_SERVER_ERROR as ErrorReponse;
@@ -103,7 +104,7 @@ async function updateMember(member: Member, guild_id: string, roles?: (string | 
 
     nickChanged = true;
 
-    const success = await GuildService.updateGuildMemberNick(guild_id, member.user.id, nick);
+    const success = await GuildService.updateGuildMemberNick(guild.id, member.user.id, nick);
 
     if (!success) {
       return errors.response_500.INTERNAL_SERVER_ERROR as ErrorReponse;
@@ -116,36 +117,36 @@ async function updateMember(member: Member, guild_id: string, roles?: (string | 
     const updatePayload = {
       roles: member.roles,
       user: globalUtils.miniUserObject(member.user!!),
-      guild_id: guild_id,
+      guild_id: guild.id,
       nick: member.nick,
     };
 
-    await dispatcher.dispatchEventInGuild(guild_id, 'GUILD_MEMBER_UPDATE', updatePayload);
-    await lazyRequest.syncMemberList(guild_id, member.id!!);
+    await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_UPDATE', updatePayload);
+    await lazyRequest.syncMemberList(guild, member.id!!);
   }
 
   return {
     roles: member.roles,
     user: globalUtils.miniUserObject(member.user!!),
-    guild_id: guild_id,
+    guild_id: guild.id,
     nick: member.nick,
   };
 }
 
 router.patch(
   '/:memberid',
+  memberMiddleware,
   guildPermissionsMiddleware('MANAGE_ROLES'),
   guildPermissionsMiddleware('MANAGE_NICKNAMES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateMember.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateMember.timeFrame,
+    "updateMember"
   ),
   async (req: Request, res: Response) => {
     try {
       const member = req.member;
       const guild = req.guild;
 
-      const newMember = await updateMember(member, guild.id, req.body.roles, req.body.nick);
+      const newMember = await updateMember(guild, member, req.body.roles, req.body.nick);
 
       if ("code" in newMember) {
         return res.status(newMember.code).json(newMember);
@@ -172,8 +173,7 @@ router.patch(
   '/@me/nick',
   guildPermissionsMiddleware('CHANGE_NICKNAME'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateNickname.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateNickname.timeFrame,
+    "updateNickname"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -184,7 +184,7 @@ router.patch(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
-      const newMember = await updateMember(member, req.guild.id, undefined, req.body.nick);
+      const newMember = await updateMember(req.guild, member, undefined, req.body.nick);
 
       if ("code" in newMember) {
         return res.status(newMember.code).json(newMember);

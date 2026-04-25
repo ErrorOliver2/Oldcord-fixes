@@ -1,6 +1,6 @@
 import type { Guild } from "./guild.ts";
-import type { Relationship } from "./relationship.ts";
 import type { User } from "./user.ts";
+import type { WebSocket } from "ws";
 
 export interface Session {
     id: string;
@@ -22,8 +22,7 @@ export interface Session {
     unavailable_guilds: Guild[];
     presences: any[];
     read_states: any[];
-    relationships: Relationship[];
-    subscriptions: any[];
+    subscriptions: any;
     memberListCache: any;
     guildCache: Guild[];
     apiVersion: number;

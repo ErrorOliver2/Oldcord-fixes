@@ -1,3 +1,4 @@
+import type { Channel } from '../types/channel.ts';
 import { prisma } from '../prisma.ts';
 import { logText } from './logger.ts';
 
@@ -110,7 +111,7 @@ const permissions = {
       if (data.owner_id === user_id) return true;
 
       const member = data.members[0];
-      const channel = data.channels[0];
+      const channel = data.channels[0] as Channel;
       const everyoneRole = data.roles.find(r => r.role_id === guild_id);
 
       let perms = BigInt(everyoneRole?.permissions ?? 0);

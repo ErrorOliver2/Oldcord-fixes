@@ -15,10 +15,7 @@ const router = Router();
 router.delete(
   '/:guildid',
   guildMiddleware,
-  rateLimitMiddleware(
-    ctx.config!.ratelimit_config.leaveGuild.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.leaveGuild.timeFrame,
-  ),
+  rateLimitMiddleware("leaveGuild"),
   async (req: Request, res: Response) => {
     try {
       try {
@@ -77,8 +74,7 @@ router.patch(
   '/:guildid/settings',
   guildMiddleware,
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.updateUsersGuildSettings.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.updateUsersGuildSettings.timeFrame,
+    "updateUsersGuildSettings"
   ),
   async (req: Request, res: Response) => {
     try {

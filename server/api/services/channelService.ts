@@ -76,6 +76,32 @@ export const ChannelService = {
         };
     },
 
+    _formatChannelObjectSimple(channel: any): Channel {
+        const overwrites = (channel.permission_overwrites as any[]) || [];
+
+        return {
+            id: channel.id,
+            name: channel.name,
+            type: channel.type,
+            position: channel.position,
+            permission_overwrites: overwrites,
+            ...([ChannelType.TEXT, ChannelType.VOICE, ChannelType.NEWS, ChannelType.CATEGORY].includes(channel.type || ChannelType.TEXT) && {
+                guild_id: channel.guild_id
+            }),
+            ...([ChannelType.TEXT, ChannelType.NEWS].includes(channel.type || ChannelType.TEXT) && {
+                topic: channel.topic,
+                rate_limit_per_user: channel.rate_limit_per_user,
+                nsfw: channel.nsfw ?? false,
+                last_message_id: channel.last_message_id,
+                parent_id: channel.parent_id,
+            }),
+            ...(channel.type === ChannelType.VOICE && {
+                bitrate: channel.bitrate,
+                user_limit: channel.user_limit,
+                parent_id: channel.parent_id,
+            }),
+        };
+    },
     async _getRecipientObjects(recipients: User[] | string[]): Promise<User[]> {
         const recipientUsers: User[] = [];
 
@@ -170,7 +196,7 @@ export const ChannelService = {
                     channel_id: channelId,
                     revoked: false // Standard behavior: don't show deleted/revoked invites
                 },
-                include: { guild: true } 
+                include: { guild: true, inviter: true } 
             });
 
             return invites.map((i) => InviteService._formatInviteResponse(i));

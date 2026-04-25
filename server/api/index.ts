@@ -23,17 +23,7 @@ import tutorial from './tutorial.ts';
 import users from './users/index.ts';
 import voice from './voice.ts';
 import webhooks from './webhooks.js';
-import type { NextFunction, Request, Response } from "express";
-import { GuildService } from './services/guildService.ts';
-import { AccountService } from './services/accountService.ts';
-import { ChannelService } from './services/channelService.ts';
-import { MessageService } from './services/messageService.ts';
-import { OAuthService } from './services/oauthService.ts';
-import { WebhookService } from './services/webhookService.ts';
-import { InviteService } from './services/inviteService.ts';
-import type { Account } from '../types/account.ts';
-import { ChannelType } from '../types/channel.ts';
-import errors from '../helpers/errors.ts';
+import type { Request, Response } from "express";
 
 app.use('/auth', auth);
 app.use('/connections', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), connections);
@@ -121,194 +111,13 @@ app.use('/reports', reports);
 
 app.use(authMiddleware);
 
-app.param('userid', async (req: Request, _res: Response, next: NextFunction, userid: string) => {
-  if (userid === '@me') {
-     userid = req.account.id;
-  }
-
-  req.user = await AccountService.getById(userid) as Account;
-  req.is_user_staff = req.user && (req.user.flags!! & (1 << 0)) === 1 << 0;
-
-  if (req.user != null && req.is_user_staff && req.user.staff)
-    req.user_staff_details = req.user.staff;
-
-  next();
-});
-
-app.param('guildid', async (req: Request, res: Response, next: NextFunction, guildid: string) => {
-  const guild = await GuildService.getById(guildid);
-
-  if (!guild) {
-    return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-  }
-
-  req.guild = guild;
-
-  return next();
-});
-
-app.param('roleid', async (req: Request, res: Response, next: NextFunction, roleid: string) => {
-  if (!req.guild || !req.guild.roles) {
-    return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-  }
-
-  const role = req.guild.roles.find((x) => x.id === roleid);
-
-  if (!role) {
-    return res.status(404).json(errors.response_404.UNKNOWN_ROLE);
-  }
-
-  req.role = role;
-
-  return next();
-});
-
-app.param('channelid', async (req: Request, res: Response, next: NextFunction, channelid) => {
-  const guild = req.guild;
-
-  if (!guild) {
-    const channel = await ChannelService.getChannelById(channelid);
-    
-    if (!channel) {
-      return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-    }
-
-    req.channel = channel;
-
-    return next();
-  }
-
-  const member = guild.members?.find((y) => y.id === req.account.id);
-
-  if (!member) {
-    return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
-  }
-
-  req.member = member;
-  
-  const channel = guild.channels?.find((y) => y.id === channelid);
-
-  if (!channel) {
-    return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-  }
-
-  const typeInt = parseInt(channel.type as string);
-
-  if (req.channel_types_are_ints) {
-    channel.type = typeInt;
-  } else {
-    channel.type = typeInt === ChannelType.VOICE ? 'voice' : 'text';
-  }
-
-  req.channel = channel;
-  next();
-});
-
-app.param('code', async (req: Request, res: Response, next: NextFunction, code: string) => {
-  const invite =  await InviteService.getInviteByCode(code);
-
-  if (!invite) {
-    return res.status(404).json(errors.response_404.UNKNOWN_INVITE);
-  }
-
-  req.invite = invite;
-
-  if (!req.guild && req.invite && req.invite.channel.guild_id) {
-    const guild = await GuildService.getById(req.invite.channel.guild_id);
-
-    if (!guild) {
-      return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-    }
-
-    req.guild = guild;
-  }
-
-  return next();
-});
-
-app.param('messageid', async (req: Request, res: Response, next: NextFunction, messageid: string) => {
-  const message = await MessageService.getMessageById(messageid);
-
-  if (!message) {
-    return res.status(404).json(errors.response_404.UNKNOWN_MESSAGE);
-  }
-
-  req.message = message;
-
-  return next();
-});
-
-app.param('memberid', async (req: Request, res: Response, next, memberid: string) => {
-   if (!req.guild || !req.guild.members) {
-    return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
-  }
-
-  const member = req.guild.members.find((x) => x.id === memberid);
-
-  if (!member) {
-    return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
-  }
-
-  req.member = member;
-
-  return next();
-});
-
-app.param('subscriptionid', async (req: Request, res: Response, next: NextFunction, subscriptionid: string) => {
-  const subscription = await GuildService.getSubscription(subscriptionid);
-
-  if (!subscription) {
-    return res.status(404).json(errors.response_404.UNKNOWN_SUBSCRIPTION_PLAN);
-  }
-
-  req.subscription = subscription;
-
-  return next();
-});
-
-app.param('recipientid', async (req: Request, res: Response, next: NextFunction, recipientid: string) => {
-  const recipient = await AccountService.getById(recipientid);
-
-  if (!recipient) {
-    return res.status(404).json(errors.response_404.UNKNOWN_USER);
-  }
-
-  req.recipient = recipient;
-
-  return next();
-});
-
-app.param('applicationid', async (req: Request, res: Response, next: NextFunction, id: string) => {
-  const application = await OAuthService.getApplicationById(id);
-
-  if (!application) {
-    return res.status(404).json(errors.response_404.UNKNOWN_APPLICATION);
-  }
-
-  req.application = application;
-
-  return next();
-});
-
-app.param('webhookid', async (req: Request, res: Response, next: NextFunction, webhookid: string) => {
-  const webhook = await WebhookService.getWebhookById(webhookid);
-
-  if (!webhook) {
-    return res.status(404).json(errors.response_404.UNKNOWN_WEBHOOK);
-  }
-
-  req.webhook = webhook;
-
-  return next();
-});
-
 app.use('/admin', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), admin);
 app.use('/tutorial', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), tutorial);
 app.use('/hypesquad', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), hypesquad);
 app.use('/users', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), users);
 app.use('/voice', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), voice);
 app.use('/guilds', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), guilds);
-app.use('/channels', channels);
+app.use('/channels', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), channels);
 app.use('/gifs', gifs);
 app.use('/entitlements', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), entitlements);
 app.use('/activities', instanceMiddleware('VERIFIED_EMAIL_REQUIRED'), activities);

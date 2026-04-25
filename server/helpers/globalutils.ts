@@ -17,6 +17,7 @@ import { ChannelType, type Channel } from '../types/channel.ts';
 import type { Bot } from '../types/bot.ts';
 import ctx from '../context.ts';
 import { RelationshipType } from '../types/relationship.ts';
+import { MessageService } from '../api/services/messageService.ts';
 
 const configPath = './config.json';
 
@@ -261,8 +262,6 @@ const globalUtils = {
 
     const baseUrl = _config.gateway_url == '' ? (host ?? _config.base_url) : _config.gateway_url;
     const result = `${_config.secure ? 'wss' : 'ws'}://${baseUrl}${_config.includePortInWsUrl && (_config.secure ? _config.ws_port != 443 : _config.ws_port != 80) ? `:${_config.ws_port}` : ''}`;
-
-    console.log(result);
 
     return result;
   },
@@ -951,29 +950,6 @@ const globalUtils = {
       });
     }
   },
-  formatMessage: (row: any, author: any, attachments: any, mentions: any, mention_roles: any, reactions: any, isWebhook: boolean): any => {
-    return {
-      type: row.type, //8 = boost, 9 = boosted server, guild has reached level 1, 10 = level 2, 11 = level 3 (12 = i have added what a bla bla to this channel?)
-      guild_id: row.guild_id, //Is this necessary here?
-      id: row.message_id,
-      content: row.content,
-      channel_id: row.channel_id,
-      author: globalUtils.miniUserObject(author),
-      attachments: attachments,
-      embeds: row.embeds == null ? [] : JSON.parse(row.embeds),
-      mentions: mentions,
-      mention_everyone: row.mention_everyone,
-      mention_roles: mention_roles,
-      nonce: row.nonce,
-      edited_timestamp: row.edited_timestamp,
-      timestamp: row.timestamp,
-      reactions: reactions,
-      tts: row.tts,
-      pinned: row.pinned,
-      //overrides: (!row.overrides ? [] : JSON.parse(row.overrides)), - what is this even for?
-      ...(isWebhook && { webhook_id: row.author_id.split('_')[1] }),
-    };
-  },
   channelTypeToString: (type: number): string => {
     switch (type) {
       case 0:
@@ -1188,14 +1164,9 @@ const globalUtils = {
           reactions = Object.values(reactionSummary);
         }
 
-        return formatMessage(
+        return MessageService.formatMessage(
           msg,
           author,
-          msg.attachments.map(a => ({
-            ...a,
-            id: a.attachment_id,
-            proxy_url: a.url,
-          })),
           mentions,
           mention_roles,
           reactions,
@@ -1241,7 +1212,6 @@ export const {
   parseMentions,
   pingPrivateChannel,
   pingPrivateChannelUser,
-  formatMessage,
   channelTypeToString,
   personalizeMessageObject,
   personalizeChannelObject,

@@ -10,8 +10,7 @@ import ctx from '../context.ts';
 router.get(
   '/tenor/search',
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.tenorSearch.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.tenorSearch.timeFrame,
+    "tenorSearch"
   ),
   cacheForMiddleware(60 * 30, "public", true),
   async (req: Request, res: Response) => {

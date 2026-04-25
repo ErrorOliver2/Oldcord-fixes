@@ -1,3 +1,4 @@
+import type { Attachment } from "./attachment.ts";
 import type { Reaction } from "./reaction.ts";
 import type { User } from "./user.ts";
 
@@ -28,7 +29,7 @@ export interface Message {
   mention_everyone: boolean;
   mentions: any[];
   mention_roles: string[];
-  attachments: any[];
+  attachments: Attachment[];
   embeds: any[];
   reactions?: Reaction[];
   nonce?: string | number;

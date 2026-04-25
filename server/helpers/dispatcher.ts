@@ -1,13 +1,17 @@
+import type { Guild } from '../types/guild.ts';
+import ctx from '../context.ts';
 import { prisma } from '../prisma.ts';
 import { handleMembersSync } from './lazyRequest.js';
 import { logText } from './logger.ts';
 import permissions from './permissions.ts';
+import type { Channel } from '../types/channel.ts';
+import { GuildService } from '../api/services/guildService.ts';
 
 const dispatcher = {
   dispatchEventTo: (user_id: string, type: string, payload: any): boolean => {
     const sessions = ctx.userSessions.get(user_id);
 
-    if (!sessions || sessions.size === 0) return false;
+    if (!sessions || !sessions.length) return false;
 
     for (let z = 0; z < sessions.length; z++) {
       sessions[z].dispatch(type, payload);
@@ -18,7 +22,7 @@ const dispatcher = {
   dispatchLogoutTo: (user_id: string): boolean => {
     const sessions = ctx.userSessions.get(user_id);
 
-    if (!sessions || sessions.size === 0) return false;
+    if (!sessions || !sessions.length) return false;
 
     for (let z = 0; z < sessions.length; z++) {
       sessions[z].socket.close(4004, 'Authentication failed');
@@ -37,7 +41,7 @@ const dispatcher = {
   dispatchGuildMemberUpdateToAllTheirGuilds: (user_id: string, new_user: any): boolean => {
     const sessions = ctx.userSessions.get(user_id);
 
-    if (!sessions || sessions.size === 0) return false;
+    if (!sessions || !sessions.length) return false;
 
     for (let z = 0; z < sessions.length; z++) {
       sessions[z].user = new_user;
@@ -69,17 +73,17 @@ const dispatcher = {
       for (const uSession of uSessions) {
         if (guild.owner_id !== member.user_id) {
           const guildPermCheck = await permissions.hasGuildPermissionTo(
-            guild,
+            guild.id,
             member.user_id,
             permission_check,
-            uSession.socket.client_build,
+            uSession.socket.client_build!!,
           );
           if (!guildPermCheck) continue;
           
           if (channel) {
             const channelPermCheck = await permissions.hasChannelPermissionTo(
-                channel,
-                guild,
+                channel.id,
+                guild.id,
                 member.user_id,
                 permission_check,
             );
@@ -111,7 +115,7 @@ const dispatcher = {
     const activeSessions = Array.from(ctx.userSessions.values()).flat();
 
     const updatePromises = activeSessions.map(async (session: any) => {
-      const guildInSession = session.guilds?.find((g) => g.id === guild.id);
+      const guildInSession = session.guilds?.find((g: Guild) => g.id === guild.id);
       if (!guildInSession) return;
 
       let finalPayload = payload;
@@ -164,10 +168,10 @@ const dispatcher = {
       const sub = session.subscriptions?.[guild.id];
 
       if (sub) {
-        const channel = guild.channels.find((x) => x.id === sub.channel_id);
+        const channel = guild.channels.find((x) => x.id === sub.channel_id) as Channel;
 
         if (channel) {
-          await handleMembersSync(session, channel, guild, sub);
+          await handleMembersSync(session, channel, GuildService._formatResponse(guild), sub);
         }
       }
 
@@ -199,14 +203,14 @@ const dispatcher = {
 
         if (type === 'PRESENCE_UPDATE' && session.socket) {
           const isLegacyClient =
-          (session.socket && session.socket.client_build_date.getFullYear() === 2015) ||
+          (session.socket && session.socket.client_build_date!!.getFullYear() === 2015) ||
           (session.socket &&
-            session.socket.client_build_date.getFullYear() === 2016 &&
-            session.socket.client_build_date.getMonth() < 8) ||
+            session.socket.client_build_date!!.getFullYear() === 2016 &&
+            session.socket.client_build_date!!.getMonth() < 8) ||
           (session.socket &&
-            session.socket.client_build_date.getFullYear() === 2016 &&
-            session.socket.client_build_date.getMonth() === 8 &&
-            session.socket.client_build_date.getDate() < 26);
+            session.socket.client_build_date!!.getFullYear() === 2016 &&
+            session.socket.client_build_date!!.getMonth() === 8 &&
+            session.socket.client_build_date!!.getDate() < 26);
 
             if (isLegacyClient) {
               const current_status = payload.status.toLowerCase();
@@ -270,7 +274,7 @@ const dispatcher = {
       const uSessions = ctx.userSessions.get(member.user_id);
       if (!uSessions) continue;
 
-      const hasAccess = await permissions.hasChannelPermissionTo(channel, guild, member.user_id, 'READ_MESSAGES');
+      const hasAccess = await permissions.hasChannelPermissionTo(channel.id, guild.id, member.user_id, 'READ_MESSAGES');
       if (!hasAccess) continue;
 
       for (const session of uSessions) {

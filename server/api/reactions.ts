@@ -3,21 +3,19 @@ import { Router, type Request, type Response } from 'express';
 import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { logText } from '../helpers/logger.ts';
-import { cacheForMiddleware, channelPermissionsMiddleware, rateLimitMiddleware } from '../helpers/middlewares.ts';
+import { cacheForMiddleware, channelPermissionsMiddleware, rateLimitMiddleware, userMiddleware } from '../helpers/middlewares.ts';
 import { MessageService } from './services/messageService.ts';
 import { ChannelType } from '../types/channel.ts';
 import permissions from '../helpers/permissions.ts';
 import { prisma } from '../prisma.ts';
-import ctx from '../context.ts';
 import { PUBLIC_USER_SELECT } from './services/accountService.ts';
 
-const router = Router({ mergeParams: false });
+const router = Router({ mergeParams: true });
 
 router.delete(
   ['/:urlencoded/@me', '/:urlencoded/%40me'],
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.removeReaction.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.removeReaction.timeFrame,
+    "removeReaction"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -30,6 +28,8 @@ router.delete(
       }
 
       const message = req.message;
+
+        console.log(message);
 
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({
@@ -90,10 +90,10 @@ router.delete(
 
 router.delete(
   '/:urlencoded/:userid',
+  userMiddleware,
   channelPermissionsMiddleware('MANAGE_MESSAGES'),
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.removeReaction.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.removeReaction.timeFrame,
+    "removeReaction"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -167,8 +167,7 @@ router.delete(
 router.put(
   ['/:urlencoded/@me', '/:urlencoded/%40me'],
   rateLimitMiddleware(
-    ctx.config!.ratelimit_config.addReaction.maxPerTimeFrame,
-    ctx.config!.ratelimit_config.addReaction.timeFrame,
+    "addReaction"
   ),
   async (req: Request, res: Response) => {
     try {
@@ -181,6 +180,8 @@ router.put(
       }
 
       const message = req.message;
+
+      console.log(message);
 
       if (guild && guild.exclusions?.includes('reactions')) {
         return res.status(400).json({

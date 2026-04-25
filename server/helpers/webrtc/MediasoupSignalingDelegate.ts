@@ -7,6 +7,7 @@ import { logText } from '../logger.ts';
 import { MediasoupWebRtcClient } from './MediasoupWebRtcClient.ts';
 import { VoiceRoom } from './VoiceRoom.ts';
 import type { Worker, WorkerLogTag } from 'mediasoup/types';
+import ctx from '../../context.ts';
 
 export interface SDPAnswer {
   sdp?: string;
@@ -144,7 +145,7 @@ class MediasoupSignalingDelegate {
     const iceCandidates = transport.iceCandidates;
     const iceCandidate = iceCandidates[0];
     const dltsParamters = transport.dtlsParameters;
-    const fingerprint = dltsParamters.fingerprints.find((x) => x.algorithm === 'sha-256');
+    const fingerprint = dltsParamters.fingerprints.find((x: any) => x.algorithm === 'sha-256');
     if (!fingerprint) {
       return Promise.reject(new Error('Fingerprint not found'));
     }
@@ -205,7 +206,7 @@ class MediasoupSignalingDelegate {
     this._rooms.get(client.voiceRoomId)?.onClientLeave(client);
   }
 
-  getClientsForRtcServer(rtcServerId) {
+  getClientsForRtcServer(rtcServerId: string) {
     if (!this._rooms.has(rtcServerId)) {
       return new Set();
     }
@@ -240,7 +241,7 @@ class MediasoupSignalingDelegate {
     return worker;
   }
 
-  async getOrCreateRoom(roomId, type) {
+  async getOrCreateRoom(roomId: string, type: string) {
     if (!this._rooms.has(roomId)) {
       const worker = this.getNextWorker();
       const router = await worker.createRouter({

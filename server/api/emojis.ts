@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 
 import globalUtils from '../helpers/globalutils.ts';
 import { logText } from '../helpers/logger.ts';
-import { guildMiddleware, guildPermissionsMiddleware } from '../helpers/middlewares.ts';
+import { guildPermissionsMiddleware } from '../helpers/middlewares.ts';
 import Snowflake from '../helpers/snowflake.ts';
 const router = Router({ mergeParams: true });
 import dispatcher from '../helpers/dispatcher.ts';
@@ -16,7 +16,6 @@ import ctx from '../context.ts';
 
 router.get(
   '/',
-  guildMiddleware,
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
   async (req: Request, res: Response) => {
     try {
@@ -32,7 +31,7 @@ router.get(
   },
 );
 
-router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Request, res: Response) => {
+router.post('/', guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Request, res: Response) => {
   try {
     const account = req.account;
     const guild = req.guild;
@@ -138,7 +137,6 @@ router.post('/', guildMiddleware, guildPermissionsMiddleware('MANAGE_EMOJIS'), a
 
 router.patch(
   '/:emoji',
-  guildMiddleware,
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
   async (req: Request, res: Response) => {
     try {
@@ -231,7 +229,6 @@ router.patch(
 
 router.delete(
   '/:emoji',
-  guildMiddleware,
   guildPermissionsMiddleware('MANAGE_EMOJIS'),
   async (req: Request, res: Response) => {
     try {
