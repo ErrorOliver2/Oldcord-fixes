@@ -257,14 +257,143 @@ router.post('/:webhookid/:webhooktoken', webhookMiddleware, async (req: Request,
   }
 });
 
+const getBaseInfo = (body: any) => ({
+  repoName: body.repository.full_name,
+  repoUrl: body.repository.html_url,
+  senderName: body.sender.login,
+  senderUrl: body.sender.html_url,
+  senderAvatar: body.sender.avatar_url,
+});
+
+function handleGithubPush(body: any): Embed[] {
+  if (!body.commits || body.commits.length === 0) return [];
+
+  const repo = body.repository;
+  const branch = body.ref.replace('refs/heads/', '');
+  const commitCount = body.commits.length;
+  const description = body.commits.map((commit: any) => {
+    const shortHash = commit.id.slice(0, 7);
+    const commitUrl = `${repo.html_url}/commit/${commit.id}`;
+    const cleanMessage = commit.message.split('\n')[0].replace(/`/g, '\\`'); 
+    
+    return `[\`${shortHash}\`](${commitUrl}) ${cleanMessage} - ${commit.author.username || commit.author.name}`;
+  }).join('\n');
+
+  const finalUrl = commitCount === 1 ? `${repo.html_url}/commit/${body.commits[0].id}` : `${repo.html_url}/compare/${body.before.slice(0, 7)}...${body.after.slice(0, 7)}`;
+
+  return [
+    {
+      type: 'rich',
+      color: 7506394,
+      title: `[${repo.name}:${branch}] ${commitCount} new commit(s)`,
+      url: finalUrl,
+      description: description,
+      author: {
+        name: body.sender.login,
+        url: body.sender.html_url,
+        icon_url: body.sender.avatar_url,
+        proxy_icon_url: body.sender.avatar_url,
+      },
+    },
+  ];
+}
+
+function handleGithubStar(body: any): Embed[] {
+  const { repoName, senderName, senderAvatar } = getBaseInfo(body);
+
+  return [{
+    type: 'rich',
+    color: 16769024,
+    description: `**${senderName}** starred [${repoName}](${body.repository.html_url})`,
+    author: {
+      name: senderName,
+      url: body.sender.html_url,
+      icon_url: senderAvatar,
+      proxy_icon_url: senderAvatar
+    }
+  }];
+}
+
+function handleGithubIssueComment(body: any): Embed[] {
+  const { repoName, senderName, senderAvatar } = getBaseInfo(body);
+  const issue = body.issue;
+  const comment = body.comment;
+
+  return [{
+    type: 'rich',
+    color: 7506394,
+    title: `[${repoName}] New comment on issue #${issue.number}: ${issue.title}`,
+    url: comment.html_url,
+    description: comment.body.length > 500 ? comment.body.slice(0, 500) + '...' : comment.body,
+    author: { 
+      name: senderName, 
+      icon_url: senderAvatar,
+      url: body.sender.html_url, 
+      proxy_icon_url: senderAvatar 
+    }
+  }];
+}
+
+function handleGithubIssue(body: any): Embed[] {
+  const { repoName, senderName, senderAvatar } = getBaseInfo(body);
+  const action = body.action;
+  const issue = body.issue;
+
+  return [{
+    type: 'rich',
+    color: action === 'opened' ? 44413 : 15024238,
+    title: `[${repoName}] Issue ${action}: #${issue.number} ${issue.title}`,
+    url: issue.html_url,
+    description: action === 'opened' ? issue.body : null,
+    author: { 
+      name: senderName, 
+      icon_url: senderAvatar, 
+      proxy_icon_url: senderAvatar, 
+      url: body.sender.html_url 
+    }
+  }];
+}
+
+function handleGithubPullRequest(body: any): Embed[] {
+  const { repoName, senderName, senderAvatar } = getBaseInfo(body);
+  const pr = body.pull_request;
+  const action = body.action;
+
+  return [{
+    type: 'rich',
+    color: action === 'opened' ? 44413 : 7506394,
+    title: `[${repoName}] Pull request ${action}: #${pr.number} ${pr.title}`,
+    url: pr.html_url,
+    description: action === 'opened' ? pr.body : null,
+    author: { 
+      name: senderName, 
+      icon_url: senderAvatar,
+      proxy_icon_url: senderAvatar,
+      url: body.sender.html_url
+    }
+  }];
+}
+
+function handleGithubFork(body: any): Embed[] {
+  const { repoName, senderName, senderAvatar } = getBaseInfo(body);
+  const forkee = body.forkee;
+
+  return [{
+    type: 'rich',
+    color: 7506394,
+    description: `**${senderName}** forked [${repoName}](${body.repository.html_url}) to [${forkee.full_name}](${forkee.html_url})`,
+    author: { 
+      name: senderName, 
+      icon_url: senderAvatar, 
+      proxy_icon_url: senderAvatar,
+      url: body.sender.html_url 
+    }
+  }];
+}
+
 router.post('/:webhookid/:webhooktoken/github', webhookMiddleware, async (req: Request, res: Response) => {
   try {
     const webhook = req.webhook;
-    const channel = await ChannelService.getChannelById(webhook.channel_id);
-
-    if (!channel) {
-      return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
-    }
 
     const override = {
       username: 'GitHub',
@@ -283,56 +412,37 @@ router.post('/:webhookid/:webhooktoken/github', webhookMiddleware, async (req: R
     }
 
     const override_id = Snowflake.generate();
+    const event = req.headers['x-github-event'] as string;
 
     let embeds: Embed[] = [];
 
-    if (req.body.commits && req.body.commits.length > 0) {
-      let commit_url = "";
-      let description = "";
-
-      if (req.body.commits.length == 1) {
-        commit_url = `${req.body.repository.html_url}/commit/${req.body.commits[0].id}`;
-
-        description =
-          '[`' +
-          req.body.commits[0].id.slice(0, 7) +
-          '`]' +
-          `(${commit_url}) ${req.body.commits[0].message.length > 50 ? req.body.commits[0].message.slice(0, 50) + '...' : req.body.commits[0].message} - ${req.body.commits[0].author.username}`;
-      } else {
-        commit_url = `${req.body.repository.html_url}/compare/${req.body.commits[0].id.slice(0, 7)}...${req.body.commits[req.body.commits.length - 1].id.slice(0, 7)}`;
-
-        for (var commit of req.body.commits) {
-          const c_url = `${req.body.repository.html_url}/commit/${commit.id}`;
-
-          description +=
-            `\n` +
-            '[`' +
-            commit.id.slice(0, 7) +
-            '`]' +
-            `(${c_url}) ${commit.message.length > 50 ? commit.message.slice(0, 50) + '...' : commit.message} - ${commit.author.username}`;
-        }
-      }
-
-      embeds = [
-        {
-          type: 'rich',
-          color: 7506394,
-          title: `[${req.body.repository.name}:${req.body.ref.replace('refs/heads/', '')}] ${req.body.commits.length} new commit(s)`,
-          url: commit_url,
-          description: description,
-          author: {
-            icon_url: req.body.sender.avatar_url,
-            name: req.body.sender.login,
-            proxy_icon_url: req.body.sender.avatar_url,
-            url: req.body.sender.url,
-          },
-        },
-      ];
+    switch(event) {
+      case 'push':
+        embeds = handleGithubPush(req.body);
+        break;
+      case 'issues':
+        embeds = handleGithubIssue(req.body);
+        break;
+      case 'issue_comment':
+        embeds = handleGithubIssueComment(req.body);
+        break;
+      case 'pull_request':
+        embeds = handleGithubPullRequest(req.body);
+        break;
+      case 'watch':
+        embeds = handleGithubStar(req.body);
+        break;
+      case 'fork':
+        embeds = handleGithubFork(req.body);
+        break;
+      default:
+        logText(`Unhandled GitHub event: ${event}`, 'warn');
+        return res.status(204).send();
     }
-
+    
     const createMessage = await MessageService.createMessage(
-      !channel.guild_id ? null : channel.guild_id,
-      channel.id,
+      webhook.guild_id,
+      webhook.channel_id,
       'WEBHOOK_' + webhook.id + '_' + override_id,
       req.body.content,
       req.body.nonce,
@@ -360,7 +470,7 @@ router.post('/:webhookid/:webhooktoken/github', webhookMiddleware, async (req: R
     createMessage.author.username = override.username;
     createMessage.author.avatar = override.avatar_url;
 
-    await dispatcher.dispatchEventInChannel(webhook.guild_id, channel.id, 'MESSAGE_CREATE', createMessage);
+    await dispatcher.dispatchEventInChannel(webhook.guild_id, webhook.channel_id, 'MESSAGE_CREATE', createMessage);
 
     return res.status(204).send();
   } catch (error) {
