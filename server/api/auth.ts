@@ -11,6 +11,25 @@ import { AuthService } from './services/authService.ts';
 import type { Request, Response } from "express";
 import ctx from '../context.ts';
 
+router.post("/register/single-click", instanceMiddleware("NO_REGISTRATION"), rateLimitMiddleware("registration"), async (_req: Request, res: Response) => {
+  try {
+    const result = await AuthService.registerSingleClick();
+
+    return res.status(200).json({
+      token: result.token,
+      login: result.login
+    });
+  } catch (error: any) {
+      if (error.status) {
+        return res.status(error.status).json(error.error);
+      }
+
+      logText(error, 'error');
+
+      return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+    }
+});
+
 router.post(
   '/register',
   instanceMiddleware('NO_REGISTRATION'),
@@ -185,6 +204,33 @@ router.post(
     }
   },
 );
+
+router.post("/login/single-click", rateLimitMiddleware("registration"), async (req: Request, res: Response) => {
+  try {
+    const login = req.body.login;
+
+    if (!login) {
+      return res.status(400).json({
+        code: 400,
+        login: 'This field is required',
+      });
+    }
+
+    const result = await AuthService.loginSingleClick(login);
+
+    return res.status(200).json({
+      token: result.token
+    });
+  } catch (error: any) {
+      if (error.status) {
+        return res.status(error.status).json(error.error);
+      }
+
+      logText(error, 'error');
+
+      return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+    }
+});
 
 router.post(
   '/mfa/totp',

@@ -101,6 +101,104 @@ export const AuthService = {
         }
     },
 
+    async registerSingleClick(): Promise<{
+        token: string;
+        login: string;
+    }> {
+        function randomUsername(): string {
+            const first_words = [
+                "pumpkin", "warrior", "alligator", "shadow", "iron",
+                "swift", "brave", "frost", "neon", "cosmic"
+            ];
+
+            const second_words = [
+                "slayer", "hunter", "knight", "diver", "spirit",
+                "beast", "pilot", "ghost", "rebel", "seeker"
+            ];
+
+            const first = first_words[Math.floor(Math.random() * first_words.length)];
+            const second = second_words[Math.floor(Math.random() * second_words.length)];
+            const numbers = Math.floor(Math.random() * 9989) + 10;
+
+            return `${first}_${second}_${numbers}`;
+        }
+
+        const username = randomUsername();
+        const login = generateString(50);
+        const id = generate();
+        const salt = await genSalt(10);
+        const pwHash = await hash(generateString(500), salt);
+        const discriminator = Math.floor(1000 + Math.random() * 9000).toString();
+        const newUser = await prisma.user.create({
+            data: {
+                id,
+                username,
+                discriminator,
+                email: `${username}@email.oldcord`,
+                password: pwHash,
+                token: generateToken(id, pwHash),
+                created_at: new Date().toISOString(),
+                verified: !config.email_config.enabled,
+                email_token: login,
+                settings: {
+                    show_current_game: false,
+                    inline_attachment_media: true,
+                    inline_embed_media: true,
+                    render_embeds: true,
+                    render_reactions: true,
+                    sync: true,
+                    theme: "dark",
+                    enable_tts_command: true,
+                    message_display_compact: false,
+                    locale: "en-US",
+                    convert_emoticons: true,
+                    restricted_guilds: [],
+                    allow_email_friend_request: false,
+                    friend_source_flags: { all: true },
+                    developer_mode: true,
+                    guild_positions: [],
+                    detect_platform_accounts: false,
+                    status: "online"
+                }
+            }
+        });
+
+        const autoJoinGuild = config.instance.flags.filter((x) =>
+            x.toLowerCase().includes('autojoin:'),
+        );
+
+        if (autoJoinGuild.length > 0) {
+            let guildId = autoJoinGuild[0].split(':')[1];
+
+            await GuildService.addMember(newUser.id, guildId);
+        }
+
+        return {
+            token: newUser.token!!,
+            login: login
+        };
+    },
+
+    async loginSingleClick(login: string): Promise<LoginSuccessResponse> {
+        const user = await prisma.user.findFirst({
+            where: { 
+                email_token: login
+            }
+        });
+
+        if (!user) {
+            throw {
+                status: 400,
+                message: { code: 400, login: 'Login is invalid.' }
+            };
+        }
+
+        return {
+            token: user.token!!,
+            settings: {}
+        }
+    },
+
     async login(data: any, referer?: string): Promise<LoginSuccessResponse | LoginMFARequiredResponse> {
         const email = data.login || data.email;
 
