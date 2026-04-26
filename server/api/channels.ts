@@ -642,7 +642,7 @@ router.delete(
       };
 
       if (deletedOverwrite.type === 'role') {
-        const role = req.guild.roles?.find((r: any) => r.id === deletedOverwrite.id);
+        const role = req.guild.roles?.find((r) => r.id === deletedOverwrite.id);
 
         if (role) {
           auditOptions.role_name = role.name;

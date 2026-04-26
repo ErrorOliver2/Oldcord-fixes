@@ -403,7 +403,7 @@ router.post(
       const filteredRoles: string[] = [];
 
       for (const roleId of mentions_data.mention_roles) {
-        const role = guild.roles?.find((r: any) => r.id === roleId);
+        const role = guild.roles?.find((r) => r.id === roleId);
 
         if (role && role.mentionable) {
           filteredRoles.push(roleId);
