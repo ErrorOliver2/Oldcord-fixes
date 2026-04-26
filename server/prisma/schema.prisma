@@ -30,6 +30,7 @@ model User {
   bot                   Boolean?           @default(false)
   flags                 Int?               @default(0)
   email_token           String?
+  last_seen_at          String?             // Mainly used for guild pruning. This will only be set on IDENTIFY and RESUME, not tracked elsewhere.
   private_channels      Json?              @default("[]")
   settings              Json?              @default("{\"show_current_game\":false,\"inline_attachment_media\":true,\"inline_embed_media\":true,\"render_embeds\":true,\"render_reactions\":true,\"sync\":true,\"theme\":\"dark\",\"enable_tts_command\":true,\"message_display_compact\":false,\"locale\":\"en-US\",\"convert_emoticons\":true,\"restricted_guilds\":[],\"allow_email_friend_request\":false,\"friend_source_flags\":{\"all\":true},\"developer_mode\":true,\"guild_positions\":[],\"detect_platform_accounts\":false,\"status\":\"online\"}")
   guild_settings        Json?              @default("[]")
@@ -169,6 +170,7 @@ model Guild {
   channels                      Channel[]
   roles                         Role[]
   bans                          Ban[]
+  mfa_level                     Int?     @default(0)
   vanity_url                    String?
   default_message_notifications Int?     @default(0)
   verification_level            Int?     @default(0)

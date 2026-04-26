@@ -32,7 +32,7 @@ export const GuildService = {
             verification_level: guild.verification_level || 0,
             default_message_notifications: guild.default_message_notifications || 0,
             explicit_content_filter: guild.explicit_content_filter || 0,
-            mfa_level: 0, //to-do add this to the guild schema of prisma
+            mfa_level: guild.mfa_level || 0,
             application_id: null,
             system_channel_id: guild.system_channel_id,
             roles: (guild.roles || []).map((role: any) => {

@@ -78,6 +78,11 @@ async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) 
   socket.session.start();
   await socket.session.prepareReady();
   await socket.session.updatePresence(finalStatus, null, false, true);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { last_seen_at: new Date().toISOString() }
+  });
 }
 
 async function handleHeartbeat(socket: WebSocket, packet: GatewayHeartbeatPacket) {
@@ -460,6 +465,11 @@ async function handleResume(socket: WebSocket, packet: GatewayResumePacket) {
 
   if (sesh.eventsBuffer.find((x) => x.seq == packet.d.seq)) {
     socket.session = sesh;
+
+     await prisma.user.update({
+      where: { id: user.id },
+      data: { last_seen_at: new Date().toISOString() }
+    });
 
     return await socket.session.resume(sesh.seq, socket);
   } else {

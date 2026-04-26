@@ -24,6 +24,7 @@ import { ChannelType } from '../types/channel.ts';
 import ctx from '../context.ts';
 import { AuditLogService } from './services/auditLogService.ts';
 import { AuditLogActionType } from '../types/auditlog.ts';
+import { prisma } from '../prisma.ts';
 
 const router = Router({
   mergeParams: true
@@ -530,9 +531,32 @@ router.patch(
 router.get(
   '/:guildid/prune',
   guildMiddleware,
-  guildPermissionsMiddleware('MANAGE_GUILD'),
-  async (_req: Request, res: Response) => {
-    return res.status(200).json([]);
+  guildPermissionsMiddleware('KICK_MEMBERS'),
+  async (req: Request, res: Response) => {
+    try {
+      const days = parseInt(req.query.days as string) || 7;
+      const prune = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const count = await prisma.member.count({
+        where: {
+          guild_id: req.params.guildid as string,
+          roles: {
+            equals: []
+          },
+          user: {
+            last_seen_at: {
+              lt: prune
+            }
+          }
+        }
+      });
+
+      return res.status(200).json({ pruned: count });
+    }
+    catch (error) {
+      logText(error, 'error');
+
+      return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+    }
   },
 );
 
@@ -540,12 +564,61 @@ router.post(
   '/:guildid/prune',
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
-  async (_req: Request, res: Response) => {
-    //const days = parseInt(req.body.days as string) || 7;
-    //const guildId = req.params.guildid;
-    
-    //MEMBER_PRUNE audit log - options needs delete_member_days and members_removed count, no changes, no target id, x-audit-log-reason as reason string or null if not present
-    return res.status(204).send();
+  async (req: Request, res: Response) => {
+    try {
+      const days = parseInt(req.body.days as string) || 7;
+      const prune = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      const guildId = req.params.guildid as string;
+      const members = await prisma.member.findMany({
+        where: {
+          guild_id: guildId,
+          roles: {
+            equals: []
+          },
+          user: {
+            last_seen_at: {
+              lt: prune
+            }
+          }
+        },
+        select: {
+          user_id: true
+        }
+      });
+
+      const membersFuckingDestroyed = members.length;
+
+      if (membersFuckingDestroyed > 0) {
+        await prisma.member.deleteMany({
+          where: {
+            guild_id: guildId,
+            user_id: {
+              in: members.map(m => m.user_id)
+            }
+          }
+        });
+
+        await AuditLogService.insertEntry(
+          guildId,
+          req.account.id,
+          null,
+          AuditLogActionType.MEMBER_PRUNE,
+          req.headers['x-audit-log-reason'] as string || null,
+          [],
+          {
+            delete_member_days: days.toString(),
+            members_removed: membersFuckingDestroyed.toString()
+          }
+        );
+      }
+
+      return res.status(200).json({ pruned: membersFuckingDestroyed });
+    }
+    catch (error) {
+      logText(error, 'error');
+      
+      return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+    }
   },
 );
 
