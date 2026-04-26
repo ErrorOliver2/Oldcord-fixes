@@ -29,6 +29,8 @@ import permissions from '../helpers/permissions.ts';
 import ctx from '../context.ts';
 import { prisma } from '../prisma.ts';
 import type { Embed } from '../types/embed.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType, type AuditLogOptions } from '../types/auditlog.ts';
 
 const upload = multer();
 const router = Router({ mergeParams: true });
@@ -525,6 +527,34 @@ router.delete(
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
       }
 
+      const isModeratorAction = req.account.id !== message.author.id;
+
+      if (isModeratorAction) {
+        const recentLog = await AuditLogService.findRecent(
+          req.params.guildid as string,
+          req.account.id,
+          AuditLogActionType.MESSAGE_DELETE,
+          message.author.id
+        );
+
+        if (recentLog && (recentLog.options as AuditLogOptions).channel_id === (req.params.channelid as string)) {
+          await AuditLogService.incrementCount(recentLog.id);
+        } else {
+          await AuditLogService.insertEntry(
+            req.params.guildid as string,
+            req.account.id,
+            message.author.id,
+            AuditLogActionType.MESSAGE_DELETE,
+            null,
+            [],
+            {
+              channel_id: req.params.channelid as string,
+              count: "1"
+            }
+          );
+        }
+      }
+
       if (!(await MessageService.deleteMessage(req.params.messageid as string)))
         throw 'Message deletion failed';
 
@@ -622,7 +652,21 @@ router.post("/bulk-delete", instanceMiddleware("VERIFIED_EMAIL_REQUIRED"), rateL
       return res.status(400).json(errors.response_400.INVALID_BULK_DELETE_COUNT);
     }
 
+    const count = message_ids.length.toString();
     const canDeleteMessages = await permissions.hasChannelPermissionTo(channel.id, channel.guild_id!!, req.account.id, "MANAGE_MESSAGES");
+
+    await AuditLogService.insertEntry(
+      req.params.guildid as string,
+      req.account.id,
+      null,
+      AuditLogActionType.MESSAGE_BULK_DELETE,
+      null,
+      [],
+      {
+        count: count,
+        channel_id: req.params.channelid as string
+      }
+    );
 
     await prisma.message.deleteMany({
       where: {
@@ -632,6 +676,12 @@ router.post("/bulk-delete", instanceMiddleware("VERIFIED_EMAIL_REQUIRED"), rateL
         channel_id: channel.id,
         ...(!canDeleteMessages && { author_id: req.account.id })
       }
+    });
+
+    await dispatcher.dispatchEventInGuild(req.guild.id, 'MESSAGE_DELETE_BULK', {
+      ids: message_ids,
+      channel_id: channel.id,
+      guild_id: req.guild.id
     });
 
     return res.status(204).send();

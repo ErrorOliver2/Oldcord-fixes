@@ -14,6 +14,8 @@ import type { Embed } from '../types/embed.ts';
 import { MessageService } from './services/messageService.ts';
 import { GuildService } from './services/guildService.ts';
 import type { WebhookOverride } from '../types/webhook.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -43,6 +45,26 @@ router.patch(
         });
       }
 
+      const auditChanges: any[] = [];
+      const fields = [
+        { api: 'name', audit: 'name' },
+        { api: 'channel_id', audit: 'channel_id' },
+        { api: 'avatar', audit: 'avatar_hash' }
+      ];
+
+      for (const field of fields) {
+        const newValue = req.body[field.api];
+        const oldValue = (webhook as any)[field.api];
+
+        if (newValue !== undefined && newValue !== oldValue) {
+          auditChanges.push({
+            key: field.audit,
+            old_value: oldValue,
+            new_value: newValue
+          });
+        }
+      }
+
       const finalName = newName ?? webhook.name ?? 'Captain Hook';
       const finalAvatar = req.body.avatar !== undefined ? req.body.avatar : webhook.avatar;
 
@@ -55,6 +77,18 @@ router.patch(
 
       if (!tryUpdate) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+      }
+
+      if (auditChanges.length > 0) {
+        await AuditLogService.insertEntry(
+          webhook.guild_id,
+          req.account.id,
+          webhook.id,
+          AuditLogActionType.WEBHOOK_UPDATE, // WEBHOOK_UPDATE
+          req.headers['x-audit-log-reason'] as string || null,
+          auditChanges,
+          {}
+        );
       }
 
       return res.status(200).json(tryUpdate);
@@ -74,6 +108,22 @@ router.delete(
   async (req: Request, res: Response) => {
     try {
       const webhook = req.webhook;
+
+      const auditChanges = [
+        { key: 'name', old_value: webhook.name },
+        { key: 'channel_id', old_value: webhook.channel_id },
+        { key: 'avatar_hash', old_value: webhook.avatar }
+      ];
+
+      await AuditLogService.insertEntry(
+        webhook.guild_id,
+        req.account.id,
+        webhook.id,
+        AuditLogActionType.WEBHOOK_DELETE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
 
       await WebhookService.deleteWebhook(webhook.id);
 

@@ -352,10 +352,12 @@ model WebhookOverride {
 model AuditLog {
   id          String  @id
   guild_id    String?
-  action_type Int?
+  action_type Int
   target_id   String?
   user_id     String?
   changes     Json?
+  options     Json?
+  reason      String?
 
   @@map("audit_logs")
 }

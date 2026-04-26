@@ -10,6 +10,8 @@ import type { Request, Response } from "express";
 import type { User } from '../types/user.ts';
 import { prisma } from '../prisma.ts';
 import ctx from '../context.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -50,6 +52,34 @@ router.patch(
           code: 400,
           name: `Must be between ${ctx.config!.limits['role_name'].min} and ${ctx.config!.limits['role_name'].max} characters.`,
         });
+      }
+
+      const auditChanges: any[] = [];
+      const fields = ['name', 'color', 'hoist', 'mentionable', 'permissions'];
+
+      for (const key of fields) {
+        const newValue = req.body[key];
+        const oldValue = (role as any)[key];
+
+        if (newValue !== undefined && newValue !== oldValue) {
+          auditChanges.push({
+            key: key,
+            old_value: oldValue,
+            new_value: newValue
+          });
+        }
+      }
+
+      if (auditChanges.length > 0) {
+        await AuditLogService.insertEntry(
+          req.params.guildid as string,
+          req.account.id,
+          role.id,
+          AuditLogActionType.ROLE_UPDATE,
+          req.headers['x-audit-log-reason'] as string || null,
+          auditChanges,
+          {}
+        );
       }
 
       role.permissions = req.body.permissions ?? role.permissions;
@@ -96,6 +126,25 @@ router.delete(
       const role = req.role;
 
       const members_with_role = guild.members?.filter((x) => x.roles.some((y) => y === role.id));
+
+      const auditChanges = [
+        { key: 'name', old_value: role.name },
+        { key: 'permissions', old_value: role.permissions },
+        { key: 'color', old_value: role.color },
+        { key: 'hoist', old_value: role.hoist },
+        { key: 'mentionable', old_value: role.mentionable }
+      ];
+
+      await AuditLogService.insertEntry(
+        req.params.guildid as string,
+        req.account.id,
+        role.id,
+        AuditLogActionType.ROLE_DELETE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
+
       const attempt = await RoleService.deleteRole(req.params.roleid as string);
 
       if (!attempt) {
@@ -172,7 +221,6 @@ router.patch(
           mentionable: r.mentionable
       }));
 
-
       await Promise.all(formattedRoles.map(role =>
         dispatcher.dispatchEventInGuild(guild.id, 'GUILD_ROLE_UPDATE', {
           guild_id: guild.id,
@@ -211,6 +259,24 @@ router.post(
       if (role == null) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
+
+      const auditChanges = [
+        { key: 'name', new_value: role.name },
+        { key: 'permissions', new_value: role.permissions },
+        { key: 'color', new_value: role.color },
+        { key: 'hoist', new_value: role.hoist },
+        { key: 'mentionable', new_value: role.mentionable }
+      ];
+
+      await AuditLogService.insertEntry(
+        req.params.guildid as string,
+        req.account.id,
+        role.id,
+        AuditLogActionType.ROLE_CREATE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
 
       await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_ROLE_UPDATE', {
         guild_id: guild.id,

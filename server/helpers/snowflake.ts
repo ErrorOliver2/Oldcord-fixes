@@ -30,6 +30,20 @@ class Snowflake {
       .toString();
   }
 
+
+  static generateCustom(timestamp: number | Date): string {
+    const ts = timestamp instanceof Date ? timestamp.getTime() : timestamp;
+    
+    return snowflakeInstance
+      .generate({
+        timestamp: BigInt(ts),
+        workerId: 0n,
+        processId: 0n,
+        increment: 0n,
+      })
+      .toString();
+  }
+
   static deconstruct(snowflake: string): DeconstructedSnowflake {
     const deconstructed = snowflakeInstance.deconstruct(snowflake);
     const timestampNum = Number(deconstructed.timestamp);

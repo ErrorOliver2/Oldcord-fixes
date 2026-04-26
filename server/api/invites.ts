@@ -11,6 +11,8 @@ import { MessageService } from './services/messageService.ts';
 import permissions from '../helpers/permissions.ts';
 import ctx from '../context.ts';
 import { GuildService } from './services/guildService.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -58,6 +60,24 @@ router.delete(
       if (!hasPermission) {
         return res.status(403).json(errors.response_403.MISSING_PERMISSIONS);
       }
+
+      const auditChanges = [
+        { key: 'code', old_value: invite.code },
+        { key: 'channel_id', old_value: invite.channel.id },
+        { key: 'inviter_id', old_value: invite.inviter.id },
+        { key: 'max_uses', old_value: invite.max_uses },
+        { key: 'uses', old_value: invite.uses }
+      ];
+
+      await AuditLogService.insertEntry(
+        invite.guild.id,
+        req.account.id,
+        invite.code, 
+        AuditLogActionType.INVITE_DELETE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
 
       await prisma.invite.delete({
         where: {

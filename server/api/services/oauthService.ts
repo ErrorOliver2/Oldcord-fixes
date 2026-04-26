@@ -8,6 +8,8 @@ import { logText } from '../../helpers/logger.ts';
 import type { User } from '../../types/user.ts';
 import permissions from '../../helpers/permissions.ts';
 import { PUBLIC_USER_SELECT } from './accountService.ts';
+import { AuditLogService } from './auditLogService.ts';
+import { AuditLogActionType } from '../../types/auditlog.ts';
 
 export const OAuthService = {
     async createApplication(ownerId: string, name: string) {
@@ -177,6 +179,16 @@ export const OAuthService = {
         } //redundant checks but remove later
 
         await GuildService.addMember(application.bot.id, guild.id);
+
+        await AuditLogService.insertEntry(
+            guildId,
+            userId,
+            application.bot.id,
+            AuditLogActionType.BOT_ADD,
+            null,
+            [],
+            {}
+        );
 
         return { success: true };
     },

@@ -24,6 +24,8 @@ import { ChannelType, type Channel } from '../types/channel.ts';
 import { MessageType } from '../types/message.ts';
 import ctx from '../context.ts';
 import permissions from '../helpers/permissions.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({ mergeParams: true });
 const config = globalUtils.config;
@@ -129,9 +131,44 @@ router.patch(
         req.body.name = req.body.name.replace(/ /g, '-');
       } //For when you just update group icons
 
-      channel.name = req.body.name ?? channel.name;
-
       if (channel.type !== ChannelType.GROUPDM && channel.type !== ChannelType.DM) {
+        const auditChanges: any[] = [];
+        const oldChannel = channel;
+        const fieldsToTrack = [
+          'name',
+          'position',
+          'topic',
+          'nsfw',
+          'rate_limit_per_user',
+          'bitrate',
+          'user_limit'
+        ];
+
+        for (const key of fieldsToTrack) {
+          const newValue = (channel as any)[key];
+          const oldValue = (oldChannel as any)[key];
+
+          if (req.body[key] !== undefined && newValue !== oldValue) {
+            auditChanges.push({
+              key: key,
+              old_value: oldValue ?? null,
+              new_value: newValue ?? null
+            });
+          }
+        }
+
+        if (auditChanges.length > 0) {
+          await  AuditLogService.insertEntry(
+            channel.guild_id!!,
+            req.account.id,
+            channel.id,
+            AuditLogActionType.CHANNEL_UPDATE,
+            req.headers['x-audit-log-reason'] as string || null,
+            auditChanges,
+            {}
+          );
+        }
+
         channel.position = req.body.position ?? channel.position;
 
         if (channel.type === ChannelType.TEXT) {
@@ -151,6 +188,8 @@ router.patch(
           channel.bitrate = Math.min(Math.max(bitrate, 8000), 96000);
         }
       } //do this for only guild channels
+
+      channel.name = req.body.name ?? channel.name;
 
       const outcome = await ChannelService.updateChannel(channel.id, channel);
 
@@ -310,6 +349,24 @@ router.post(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
+      const auditChanges = [
+        { key: 'code', new_value: invite.code },
+        { key: 'channel_id', new_value: channel.id },
+        { key: 'max_age', new_value: invite.max_age },
+        { key: 'max_uses', new_value: invite.max_uses },
+        { key: 'temporary', new_value: invite.temporary }
+      ];
+
+      await AuditLogService.insertEntry(
+        channel.guild_id!!,
+        req.account.id,
+        invite.code,
+        AuditLogActionType.INVITE_CREATE,
+        null,
+        auditChanges,
+        {}
+      );
+
       return res.status(200).json(invite);
     } catch (error) {
       logText(error, 'error');
@@ -369,6 +426,22 @@ router.post(
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
       }
 
+      const auditChanges = [
+        { key: 'name', new_value: webhook.name },
+        { key: 'channel_id', new_value: channel.id },
+        { key: 'avatar_hash', new_value: webhook.avatar }
+      ];
+
+      await AuditLogService.insertEntry(
+        channel.guild_id!!,
+        req.account.id,
+        webhook.id,
+        AuditLogActionType.WEBHOOK_CREATE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
+
       return res.status(200).json(webhook);
     } catch (error) {
       logText(error, 'error');
@@ -424,6 +497,52 @@ router.put(
         if (req.body.deny & permValue) {
           deny |= permValue;
         }
+      }
+
+      const isUpdate = overwriteIndex !== -1;
+      const actionType = isUpdate ? AuditLogActionType.CHANNEL_OVERWRITE_UPDATE : AuditLogActionType.CHANNEL_OVERWRITE_CREATE;
+      const auditChanges: any[] = [];
+      const typeInt = type === 'role' ? 0 : 1;
+
+      if (!isUpdate) {
+        auditChanges.push({ key: 'allow', new_value: allow });
+        auditChanges.push({ key: 'deny', new_value: deny });
+        auditChanges.push({ key: 'type', new_value: typeInt });
+        auditChanges.push({ key: 'id', new_value: id });
+      } else {
+        const old = channel_overwrites[overwriteIndex];
+
+        if (old.allow !== allow) {
+          auditChanges.push({ key: 'allow', old_value: old.allow, new_value: allow });
+        }
+        if (old.deny !== deny) {
+          auditChanges.push({ key: 'deny', old_value: old.deny, new_value: deny });
+        }
+      }
+
+      if (auditChanges.length > 0) {
+        const auditOptions: any = {
+          id: id,
+          type: typeInt.toString(),
+        };
+
+        if (type === 'role') {
+          const role = guild.roles?.find((r) => r.id === id);
+
+          if (role) {
+            auditOptions.role_name = role.name;
+          }
+        }
+
+        await AuditLogService.insertEntry(
+          guild.id,
+          req.account.id,
+          channel.id,
+          actionType,
+          req.headers['x-audit-log-reason'] as string || null,
+          auditChanges,
+          auditOptions
+        );
       }
 
       if (overwriteIndex === -1) {
@@ -493,6 +612,39 @@ router.delete(
       if (!req.channel_types_are_ints) {
         channel.type = channel.type == ChannelType.VOICE ? 'voice' : 'text';
       }
+
+      const deletedOverwrite = channel_overwrites[overwriteIndex];
+      const typeInt = deletedOverwrite.type === 'role' ? 0 : 1;
+      
+      const auditChanges = [
+          { key: 'allow', old_value: deletedOverwrite.allow },
+          { key: 'deny', old_value: deletedOverwrite.deny },
+          { key: 'type', old_value: typeInt },
+          { key: 'id', old_value: deletedOverwrite.id }
+      ];
+
+      const auditOptions: any = {
+          id: deletedOverwrite.id,
+          type: typeInt.toString(),
+      };
+
+      if (deletedOverwrite.type === 'role') {
+        const role = req.guild.roles?.find((r: any) => r.id === deletedOverwrite.id);
+
+        if (role) {
+          auditOptions.role_name = role.name;
+        }
+      }
+
+      await AuditLogService.insertEntry(
+        req.guild.id,
+        req.account.id,
+        channel.id,
+        AuditLogActionType.CHANNEL_OVERWRITE_DELETE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        auditOptions
+      );
 
       if (overwriteIndex === -1) {
         await dispatcher.dispatchEventInChannel(req.guild.id, channel.id, 'CHANNEL_UPDATE', channel);
@@ -741,6 +893,35 @@ router.delete(
           id: channel.id,
           guild_id: channel.guild_id,
         });
+
+        const auditChanges = [
+          { key: 'name', new_value: channel.name },
+          { key: 'type', new_value: channel.type },
+          { key: 'parent_id', new_value: channel.parent_id }
+        ];
+
+        if (channel.type === ChannelType.TEXT) {
+          auditChanges.push({ key: 'topic', new_value: channel.topic ?? '' });
+
+          if (channel.rate_limit_per_user !== undefined) {
+            auditChanges.push({ key: 'rate_limit_per_user', new_value: channel.rate_limit_per_user });
+          }
+        }
+
+        if (channel.type === ChannelType.VOICE) {
+          auditChanges.push({ key: 'bitrate', new_value: channel.bitrate ?? 64000 });
+          auditChanges.push({ key: 'user_limit', new_value: channel.user_limit ?? 0 });
+        }
+        
+        await AuditLogService.insertEntry(
+          channel.guild_id!!,
+          req.account.id,
+          channel.id,
+          AuditLogActionType.CHANNEL_DELETE,
+          req.headers['x-audit-log-reason'] as string || null,
+          auditChanges,
+          {}
+        );
 
         if (!(await ChannelService.deleteChannel(channel.id))) {
           return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);

@@ -11,6 +11,8 @@ import dispatcher from '../helpers/dispatcher.ts';
 import errors from '../helpers/errors.ts';
 import { prisma } from '../prisma.ts';
 import ctx from '../context.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 //to-do move to use a service
 
@@ -84,6 +86,20 @@ router.post('/', guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Reques
       user: globalUtils.miniUserObject(account),
     });
     
+    const auditChanges = [
+      { key: 'name', new_value: req.body.name }
+    ];
+
+    await AuditLogService.insertEntry(
+      req.params.guildid as string,
+      req.account.id,
+      emoji_id,
+      AuditLogActionType.EMOJI_CREATE,
+      req.headers['x-audit-log-reason'] as string || null,
+      auditChanges,
+      {}
+    );
+
     const updatedGuild = await prisma.guild.update({
       where: { id: guild.id },
       data: { custom_emojis: custom_emojis as any }
@@ -165,6 +181,27 @@ router.patch(
         });
       }
 
+      const auditChanges: any[] = [];
+      if (req.body.name !== undefined && req.body.name !== emoji.name) {
+        auditChanges.push({
+          key: 'name',
+          old_value: emoji.name,
+          new_value: req.body.name
+        });
+      }
+
+      if (auditChanges.length > 0) {
+        await AuditLogService.insertEntry(
+          req.params.guildid as string,
+          req.account.id,
+          emoji.id,
+          AuditLogActionType.EMOJI_UPDATE,
+          req.headers['x-audit-log-reason'] as string || null,
+          auditChanges,
+          {}
+        );
+      }
+
       const emojis = guild.emojis; 
       const customEmoji = emojis!!.find((x) => x.id === emoji_id);
 
@@ -242,6 +279,20 @@ router.delete(
       }
 
       const filteredEmojis = emojis!!.filter((x) => x.id !== emoji_id);
+
+      const auditChanges = [
+        { key: 'name', old_value: filteredEmojis[0].name }
+      ];
+
+      await AuditLogService.insertEntry(
+        guild.id,
+        req.account.id,
+        emoji_id as string,
+        AuditLogActionType.EMOJI_DELETE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
 
       const updatedGuild = await prisma.guild.update({
         where: { id: guild.id },

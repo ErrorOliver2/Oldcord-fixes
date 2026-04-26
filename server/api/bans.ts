@@ -9,6 +9,8 @@ import errors from '../helpers/errors.ts';
 import type { Request, Response } from "express";
 import { prisma } from '../prisma.ts';
 import type { User } from '../types/user.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 //to-do move to use a service
 
@@ -91,6 +93,16 @@ router.put(
           user_id: member?.id!!
         }
       });
+
+      await AuditLogService.insertEntry(
+        req.params.guildid as string,
+        sender.id,
+        member?.id!!,
+        AuditLogActionType.MEMBER_BAN_ADD,
+        req.headers['x-audit-log-reason'] as string || req.body.reason || null,
+        [],
+        {}
+      );
 
       if (userInGuild) {
         await dispatcher.dispatchEventTo(member?.id, 'GUILD_DELETE', {
@@ -201,6 +213,16 @@ router.delete(
           user: true
         }
       });
+
+      await AuditLogService.insertEntry(
+        req.params.guildid as string,
+        sender.id,
+        req.params.memberid as string,
+        AuditLogActionType.MEMBER_BAN_REMOVE,
+        req.headers['x-audit-log-reason'] as string || req.body.reason || null,
+        [],
+        {}
+      );
 
       await dispatcher.dispatchEventTo(sender.id, 'GUILD_BAN_REMOVE', {
         guild_id: req.params.guildid,

@@ -22,6 +22,8 @@ import { GuildService } from './services/guildService.ts';
 import permissions from '../helpers/permissions.ts';
 import { ChannelType } from '../types/channel.ts';
 import ctx from '../context.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({
   mergeParams: true
@@ -432,6 +434,16 @@ router.patch(
           return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
         }
 
+        await AuditLogService.insertEntry(
+          guild.id,
+          sender.id,
+          guild.id,
+          AuditLogActionType.GUILD_UPDATE,
+          null,
+          [{ key: 'owner_id', old_value: guild.owner_id, new_value: req.body.owner_id }],
+          {}
+        );
+
         guild = await GuildService.getById(req.params.guildid as string);
 
         if (guild == null) {
@@ -441,6 +453,31 @@ router.patch(
         await dispatcher.dispatchEventInGuild(req.guild.id, 'GUILD_UPDATE', guild);
 
         return res.status(200).json(guild);
+      }
+
+      const fieldMap: Record<string, string> = {
+        name: 'name',
+        afk_channel_id: 'afk_channel_id',
+        afk_timeout: 'afk_timeout',
+        icon: 'icon',
+        splash: 'splash',
+        banner: 'banner',
+        default_message_notifications: 'default_message_notifications',
+        verification_level: 'verification_level',
+        explicit_content_filter: 'explicit_content_filter',
+        system_channel_id: 'system_channel_id',
+      };
+
+      const auditChanges: any[] = [];
+
+      for (const [bodyKey, auditKey] of Object.entries(fieldMap)) {
+        if (req.body[bodyKey] !== undefined && req.body[bodyKey] !== (guild as any)[bodyKey]) {
+          auditChanges.push({
+            key: auditKey,
+            old_value: (guild as any)[bodyKey],
+            new_value: req.body[bodyKey],
+          });
+        }
       }
 
       const update = await GuildService.updateGuild(
@@ -459,6 +496,18 @@ router.patch(
 
       if (!update) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
+      }
+
+      if (auditChanges.length > 0) {
+        await AuditLogService.insertEntry(
+          req.params.guildid as string,
+          req.account.id,
+          req.guild.id,
+          AuditLogActionType.GUILD_UPDATE,
+          req.headers['x-audit-log-reason'] as string || null,
+          auditChanges,
+          {}
+        );
       }
 
       guild = await GuildService.getById(req.params.guildid as string);
@@ -492,6 +541,10 @@ router.post(
   guildMiddleware,
   guildPermissionsMiddleware('MANAGE_GUILD'),
   async (_req: Request, res: Response) => {
+    //const days = parseInt(req.body.days as string) || 7;
+    //const guildId = req.params.guildid;
+    
+    //MEMBER_PRUNE audit log - options needs delete_member_days and members_removed count, no changes, no target id, x-audit-log-reason as reason string or null if not present
     return res.status(204).send();
   },
 );
@@ -604,51 +657,10 @@ router.get(
   cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {
-      /*
-        ALL: null,
-            GUILD_UPDATE: 1,
-            CHANNEL_CREATE: 10,
-            CHANNEL_UPDATE: 11,
-            CHANNEL_DELETE: 12,
-            CHANNEL_OVERWRITE_CREATE: 13,
-            CHANNEL_OVERWRITE_UPDATE: 14,
-            CHANNEL_OVERWRITE_DELETE: 15,
-            MEMBER_KICK: 20,
-            MEMBER_PRUNE: 21,
-            MEMBER_BAN_ADD: 22,
-            MEMBER_BAN_REMOVE: 23,
-            MEMBER_UPDATE: 24,
-            MEMBER_ROLE_UPDATE: 25,
-            ROLE_CREATE: 30,
-            ROLE_UPDATE: 31,
-            ROLE_DELETE: 32,
-            INVITE_CREATE: 40,
-            INVITE_UPDATE: 41,
-            INVITE_DELETE: 42,
-            WEBHOOK_CREATE: 50,
-            WEBHOOK_UPDATE: 51,
-            WEBHOOK_DELETE: 52,
-            EMOJI_CREATE: 60,
-            EMOJI_UPDATE: 61,
-            EMOJI_DELETE: 62,
-            MESSAGE_DELETE: 72
-        */ //action_type for audit log
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const entries = await AuditLogService.getAuditLogEntries(req.params.guildid as string, limit);
 
-      //const limit = (parseInt(req.query.limit as string) > 50 ? 50 : parseInt(req.query.limit as string)) || 50;
-
-      const audit_log_entries = req.guild.audit_logs;
-      const audit_log_user_ids: any[] = [
-        ...new Set(audit_log_entries?.map((entry) => entry.user_id).filter((id) => id)),
-      ]; //to-do: fix
-      let audit_log_users = await AccountService.getByIds(audit_log_user_ids);
-
-      audit_log_users = audit_log_users.map((user) => globalUtils.miniUserObject(user));
-
-      return res.status(200).json({
-        audit_log_entries: audit_log_entries,
-        users: audit_log_users,
-        webhooks: [],
-      });
+      return res.status(200).json(entries);
     } catch (error) {
       logText(error, 'error');
 
@@ -759,6 +771,22 @@ router.post(
 
       channel.type = typeof req.body.type === 'string' ? req.body.type : number_type;
 
+      const auditChanges = [
+        { key: 'name', new_value: req.body.name },
+        { key: 'type', new_value: number_type },
+        { key: 'parent_id', new_value: send_parent_id }
+      ];
+
+      await AuditLogService.insertEntry(
+        guild.id,
+        req.account.id,
+        channel.id,
+        AuditLogActionType.CHANNEL_CREATE,
+        req.headers['x-audit-log-reason'] as string || null,
+        auditChanges,
+        {}
+      );
+
       await dispatcher.dispatchEventInGuild(req.guild.id, 'CHANNEL_CREATE', function (socket: WebSocket) {
         return globalUtils.personalizeChannelObject(socket, channel);
       });
@@ -793,6 +821,36 @@ router.patch(
 
         if (channel == null) {
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
+        }
+
+        const auditChanges: any[] = [];
+
+        if (position !== undefined && channel.position !== position) {
+          auditChanges.push({
+            key: 'position',
+            old_value: channel.position,
+            new_value: position,
+          });
+        }
+
+        if (parent_id !== undefined && channel.parent_id !== parent_id) {
+          auditChanges.push({
+            key: 'parent_id',
+            old_value: channel.parent_id,
+            new_value: parent_id,
+          });
+        }
+
+        if (auditChanges.length > 0) {
+          await AuditLogService.insertEntry(
+            guild.id,
+            req.account.id,
+            channel.id,
+            AuditLogActionType.CHANNEL_UPDATE,
+            req.headers['x-audit-log-reason'] as string || null,
+            auditChanges,
+            {}
+          );
         }
 
         channel.position = position;

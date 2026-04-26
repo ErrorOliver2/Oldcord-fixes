@@ -9,6 +9,8 @@ import { prisma } from '../prisma.ts';
 import { MessageService } from './services/messageService.ts';
 import { MessageType } from '../types/message.ts';
 import { ChannelType } from '../types/channel.ts';
+import { AuditLogService } from './services/auditLogService.ts';
+import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({ mergeParams: true });
 
@@ -43,6 +45,18 @@ router.put('/:messageid', messageMiddleware, async (req: Request, res: Response)
 
       return res.status(204).send();
     }
+
+    await AuditLogService.insertEntry(
+      req.params.guildid as string,
+      req.account.id,
+      message.author.id,
+      AuditLogActionType.MESSAGE_PIN,
+      null,
+      [],
+      {
+        channel_id: req.params.channelid as string
+      }
+    );
 
     await prisma.message.update({
       where: {
@@ -98,6 +112,18 @@ router.delete('/:messageid', messageMiddleware, async (req: Request, res: Respon
 
       return res.status(204).send();
     }
+
+    await AuditLogService.insertEntry(
+      req.params.guildid as string,
+      req.account.id,
+      message.author.id,
+      AuditLogActionType.MESSAGE_UNPIN,
+      null,
+      [],
+      {
+        channel_id: req.params.channelid as string
+      }
+    );
 
     await prisma.message.update({
       where: {
