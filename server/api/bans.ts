@@ -162,6 +162,11 @@ router.put(
         }
       }
 
+      await dispatcher.dispatchEventToAllPerms(req.params.guildid as string, null, "BAN_MEMBERS", "GUILD_BAN_ADD", {
+        guild_id: req.params.guildid,
+        user: globalUtils.miniUserObject(member?.user as User),
+      });
+
       return res.status(204).send();
     } catch (error) {
       logText(error, 'error');
@@ -224,10 +229,9 @@ router.delete(
         {}
       );
 
-      await dispatcher.dispatchEventTo(sender.id, 'GUILD_BAN_REMOVE', {
+      await dispatcher.dispatchEventToAllPerms(req.params.guildid as string, null, "BAN_MEMBERS", "GUILD_BAN_REMOVE", {
         guild_id: req.params.guildid,
         user: globalUtils.miniUserObject(deletedBan.user as User),
-        roles: [],
       });
 
       return res.status(204).send();

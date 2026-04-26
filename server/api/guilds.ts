@@ -741,7 +741,7 @@ router.patch(
 router.get(
   '/:guildid/audit-logs',
   guildMiddleware,
-  guildPermissionsMiddleware('MAANGE_GUILD'),
+  guildPermissionsMiddleware('VIEW_AUDIT_LOG'),
   cacheForMiddleware(60 * 5, "private", false),
   async (req: Request, res: Response) => {
     try {

@@ -3,6 +3,7 @@ import Snowflake from "../../helpers/snowflake.ts";
 import { type AuditLogChange, type AuditLogEntry, type AuditLogOptions } from "../../types/auditlog.ts";
 import { AccountService } from "./accountService.ts";
 import globalUtils from "../../helpers/globalutils.ts";
+import dispatcher from "../../helpers/dispatcher.ts";
 
 export const AuditLogService = {
     async insertEntry(guildId: string, userId: string, targetId: string | null, actionType: number, reason: string | null, changes: AuditLogChange[], options: AuditLogOptions): Promise<AuditLogEntry> {
@@ -21,7 +22,7 @@ export const AuditLogService = {
             }
         });
 
-        return {
+        const entry = {
             action_type: actionType,
             changes: changes,
             id: entryId,
@@ -30,6 +31,15 @@ export const AuditLogService = {
             options: options ?? undefined,
             reason: reason ?? null,
         };
+
+        let entrySend = {
+            ...entry,
+            guild_id: guildId
+        };
+
+        await dispatcher.dispatchEventToAllPerms(guildId, null, "VIEW_AUDIT_LOG", "GUILD_AUDIT_LOG_ENTRY_CREATE", entrySend);
+
+        return entry;
     },
 
     async findRecent(guildId: string, userId: string, actionType: number, targetId: string | null) {
