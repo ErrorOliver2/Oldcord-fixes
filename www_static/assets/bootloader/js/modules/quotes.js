@@ -83,7 +83,7 @@ export const LOADING_QUOTES = [
     submittedBy: 'ErrorOliver',
   },
   {
-    text: "For a dial-up connection, you will need your account name, password, and a phone number for your ISP. For a broadband account, you won't need a phone mumber.",
+    text: "For a dial-up connection, you will need your account name, password, and a phone number for your ISP. For a broadband account, you won't need a phone number.",
     submittedBy: 'ErrorOliver',
   },
   {
