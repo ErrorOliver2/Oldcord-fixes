@@ -15,7 +15,7 @@ import ctx from '../context.ts';
 import type { Session } from '../types/session.ts';
 
 async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) {
-  const { token, intents, presence, capabilities } = packet.d; //to-do should we use capabilities?
+  const { token, intents, presence } = packet.d;
 
   if (socket.session) {
     return socket.close(4005, 'You have already identified.');
@@ -72,7 +72,7 @@ async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) 
     undefined,
     undefined,
     socket.apiVersion,
-    capabilities ?? socket.client_build_date,
+    socket.client_build_date ?? null,
   );
 
   socket.session.start();
@@ -439,7 +439,7 @@ async function handleResume(socket: WebSocket, packet: GatewayResumePacket) {
       undefined,
       undefined,
       socket.apiVersion,
-      packet.d.capabilities ?? socket.client_build_date,
+      socket.client_build_date ?? null,
     );
 
     sesh.seq = packet.d.seq;

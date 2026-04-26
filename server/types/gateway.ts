@@ -89,7 +89,6 @@ export type GatewayIdentifyPacket = GatewayPacket<{
   large_threshold?: number;
   shard?: [number, number];
   presence?: any;
-  capabilities?: number;
   intents?: number;
 }>;
 
@@ -132,7 +131,6 @@ export type GatewayResumePacket = GatewayPacket<{
   token: string;
   session_id: string;
   seq: number;
-  capabilities?: any;
 }>;
 
 export interface GatewayPacket<T = any> {

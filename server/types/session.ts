@@ -26,7 +26,7 @@ export interface Session {
     memberListCache: any;
     guildCache: Guild[];
     apiVersion: number;
-    capabilities: any;
+    capabilities: Date | null;
     application: any;
 
     onClose(code: number): void;

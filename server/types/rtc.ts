@@ -26,7 +26,6 @@ export type RTCIdentify = RTCPacket<RTCOpcode.IDENTIFY, {
   session_id: string;
   token: string;
   video?: boolean;
-  capabilities?: number;
 }>;
 
 export type RTCSelectProtocol = RTCPacket<RTCOpcode.SELECT_PROTOCOL, {

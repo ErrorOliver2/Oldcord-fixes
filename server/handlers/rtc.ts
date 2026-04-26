@@ -76,7 +76,7 @@ async function handleIdentify(socket: WebSocket, packet: RTCIdentify) {
     gatewaySession.guild_id,
     gatewaySession.channel_id,
     socket.apiVersion,
-    packet.d.capabilities ?? socket.client_build_date,
+    socket.client_build_date ?? null,
   );
 
   socket.gatewaySession = gatewaySession;

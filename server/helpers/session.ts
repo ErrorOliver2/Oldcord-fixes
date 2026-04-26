@@ -63,7 +63,7 @@ class session implements Session {
   public guild_id: string;
   public subscriptions: any;
   public memberListCache: any;
-  public capabilities: any;
+  public capabilities: Date | null;
 
   constructor(
     id: string,
@@ -76,7 +76,7 @@ class session implements Session {
     guild_id = "0",
     channel_id = "0",
     apiVersion = 3,
-    capabilities: any,
+    capabilities: Date | null, //client's date now, we arent supporting capabilities.
   ) {
     this.id = id;
     this.socket = socket;
@@ -101,7 +101,7 @@ class session implements Session {
     this.memberListCache = {};
     this.guildCache = [];
     this.apiVersion = apiVersion;
-    this.capabilities = capabilities; // Either an integer (recent/third party) or a build date (specific build capabilities). We can use it to give builds/capability flag specific JSON object props.
+    this.capabilities = capabilities; // Build date (specific build capabilities). We can use it to give builds/capability flag specific JSON object props.
     this.application = null;
   }
   onClose(_code: number) {
