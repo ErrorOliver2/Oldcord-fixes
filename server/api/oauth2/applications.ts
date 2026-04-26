@@ -17,7 +17,7 @@ router.get('/', async (req: Request, res: Response) => {
     include: { bot: true }
   });
 
-  return res.json(apps.map(OAuthService.formatApplication)); //move to the service
+  return res.json(apps.map(OAuthService.formatApplication));
 });
 
 router.post('/', async (req: Request, res: Response) => {

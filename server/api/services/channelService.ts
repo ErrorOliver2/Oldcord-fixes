@@ -130,10 +130,10 @@ export const ChannelService = {
                 const outputChannel = await prisma.channel.update({
                     where: { id: channelId },
                     data: {
-                        name: channelData.name,
-                        parent_id: channelData.parent_id,
-                        position: channelData.position,
-                        permission_overwrites: channelData.permission_overwrites ?? [],
+                        name: channelData.name ?? undefined,
+                        parent_id: channelData.parent_id !== undefined ? channelData.parent_id : undefined,
+                        position: channelData.position !== undefined ? channelData.position : undefined,
+                        permission_overwrites: channelData.permission_overwrites ?? undefined,
                         topic: type === ChannelType.TEXT ? channelData.topic : undefined,
                         nsfw: type === ChannelType.TEXT ? !!channelData.nsfw : undefined,
                         last_message_id: type === ChannelType.TEXT ? channelData.last_message_id : undefined,

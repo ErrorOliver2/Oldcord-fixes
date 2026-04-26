@@ -102,14 +102,22 @@ async function updateMember(guild: Guild, member: Member, roles?: (string | { id
     }
   }
 
+  const limits = ctx.config?.limits;
+
+  if (!limits || !limits['nickname']) {
+    throw 'Failed to get configured limits for updateMember route';
+  }
+
+  const nicknameLimit = limits['nickname'];
+
   if (nick !== undefined && nick !== member.nick) {
     if (nick === '' || nick === member.user.username) {
       nick = null as unknown as string;
     }
     if (
       nick &&
-      (nick.length < ctx.config!.limits['nickname'].min ||
-        nick.length >= ctx.config!.limits['nickname'].max)
+      (nick.length < nicknameLimit.min ||
+        nick.length >= nicknameLimit.max)
     ) {
       return errors.response_400.INVALID_NICKNAME_LENGTH as ErrorReponse;
     }

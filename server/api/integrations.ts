@@ -17,14 +17,14 @@ router.get(
     try {
       const query = req.query.q;
 
-      if (!query || !ctx.config!.tenor_api_key) {
+      if (!query || !ctx.config?.klipy_api_key) {
         return res.json([]);
       }
 
-      const baseUrl = 'https://tenor.googleapis.com/v2/search';
+      const baseUrl = 'https://api.klipy.com/v2/search';
       const params = new URLSearchParams({
         q: query,
-        key: ctx.config!.tenor_api_key,
+        key: ctx.config?.klipy_api_key,
         limit: 50,
         media_filter: 'tinygif',
       } as any).toString();

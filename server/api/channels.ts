@@ -28,7 +28,6 @@ import { AuditLogService } from './services/auditLogService.ts';
 import { AuditLogActionType } from '../types/auditlog.ts';
 
 const router = Router({ mergeParams: true });
-const config = globalUtils.config;
 
 router.get(
   '/:channelid',
@@ -116,14 +115,22 @@ router.patch(
         channel.icon = null;
       }
 
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['channel_name']) {
+        throw 'Failed to get configured limits for updateChannel route';
+      }
+
+      const channelNameLimit = limits['channel_name'];
+
       if (
         req.body.name &&
-        (req.body.name.length < ctx.config!.limits['channel_name'].min ||
-          req.body.name.length >= ctx.config!.limits['channel_name'].max)
+        (req.body.name.length < channelNameLimit.min ||
+          req.body.name.length >= channelNameLimit.max)
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${ctx.config!.limits['channel_name'].min} and ${ctx.config!.limits['channel_name'].max} characters.`,
+          name: `Must be between ${channelNameLimit.min} and ${channelNameLimit.max} characters.`,
         });
       }
 
@@ -311,8 +318,15 @@ router.post(
       const sender = req.account;
       const guild = req.guild;
       const channel = req.channel;
+      const limits = ctx.config?.limits;
 
-      if (config.instance.flags.includes('NO_INVITE_CREATION')) {
+      if (!limits || !limits['invites_per_guild']) {
+        throw 'Failed to get configured limits for createInvite route';
+      }
+
+      const invitesPerGuildLimit = limits['invites_per_guild'];
+
+      if (ctx.config?.instance.flags.includes('NO_INVITE_CREATION')) {
         return res.status(400).json({
           code: 400,
           message: 'Creating invites is not allowed.',
@@ -321,10 +335,10 @@ router.post(
 
       const invites = await ChannelService.getChannelInvites(req.params.channelid as string);
 
-      if (invites.length >= ctx.config!.limits['invites_per_guild'].max) {
+      if (invites.length >= invitesPerGuildLimit.max) {
         return res.status(400).json({
           code: 400,
-          message: `Maximum number of invites per guild exceeded (${ctx.config!.limits['invites_per_guild'].max})`,
+          message: `Maximum number of invites per guild exceeded (${invitesPerGuildLimit.max})`,
         });
       }
 

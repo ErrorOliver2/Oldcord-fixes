@@ -30,7 +30,7 @@ const router = Router({
   mergeParams: true
 });
 
-router.get('/:guildid', guildMiddleware, cacheForMiddleware(60 * 10, "private", false), async (req: Request, res: Response) => {
+router.get('/:guildid', guildMiddleware, cacheForMiddleware(60 * 10, "private", false), (req: Request, res: Response) => {
   return res.status(200).json(req.guild);
 });
 
@@ -49,13 +49,20 @@ router.post(
       }
 
       const client_date = req.client_build_date;
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['guild_name']) {
+          throw 'Failed to get configured min-max limits for guild_name length'
+      }
+
+      const guildLimits = limits['guild_name'];
 
       if (
-        req.body.name.length < ctx.config!.limits['guild_name'].min ||
-        req.body.name.length >= ctx.config!.limits['guild_name'].max
+        req.body.name.length < guildLimits.min ||
+        req.body.name.length >= guildLimits.max
       ) {
         return res.status(400).json({
-          name: `Must be between ${ctx.config!.limits['guild_name'].min} and ${ctx.config!.limits['guild_name'].max} in length.`,
+          name: `Must be between ${guildLimits.min} and ${guildLimits.max} in length.`,
         });
       }
 
@@ -365,13 +372,21 @@ router.patch(
       const sender = req.account;
       let guild = req.guild;
 
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['guild_name']) {
+          throw 'Failed to get configured min-max limits for guild_name length'
+      }
+
+      const guildLimits = limits['guild_name'];
+
       if (
         req.body.name &&
-        (req.body.name.length < ctx.config!.limits['guild_name'].min ||
-          req.body.name.length >= ctx.config!.limits['guild_name'].max)
+        (req.body.name.length < guildLimits.min ||
+          req.body.name.length >=  guildLimits.max)
       ) {
         return res.status(400).json({
-          name: `Must be between ${ctx.config!.limits['guild_name'].min} and ${ctx.config!.limits['guild_name'].max} in length.`,
+          name: `Must be between ${guildLimits.min} and ${guildLimits.max} in length.`,
         });
       }
 
@@ -771,10 +786,19 @@ router.post(
     try {
       const guild = req.guild;
 
-      if (guild.channels!!.length >= ctx.config!.limits['channels_per_guild'].max) {
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['channel_name'] || !limits['channels_per_guild']) {
+          throw 'Failed to get configured limits for createChannel route'
+      }
+
+      const channelNameLimit = limits['channel_name'];
+      const channelsPerGuildLimit = limits['channels_per_guild'];
+
+      if (guild.channels!!.length >= channelsPerGuildLimit.max) {
         return res.status(400).json({
           code: 400,
-          message: `Maximum number of channels per guild exceeded (${ctx.config!.limits['channels_per_guild'].max})`,
+          message: `Maximum number of channels per guild exceeded (${channelsPerGuildLimit.max})`,
         });
       }
 
@@ -786,21 +810,21 @@ router.post(
       }
 
       if (
-        req.body.name.length < ctx.config!.limits['channel_name'].min ||
-        req.body.name.length >= ctx.config!.limits['channel_name'].max
+        req.body.name.length < channelNameLimit.min ||
+        req.body.name.length >= channelNameLimit.max
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${ctx.config!.limits['channel_name'].min} and ${ctx.config!.limits['channel_name'].max} characters.`,
+          name: `Must be between ${channelNameLimit.min} and ${channelNameLimit.max} characters.`,
         });
       }
 
       req.body.name = req.body.name.replace(/ /g, '-');
 
-      let number_type = 0;
+      let number_type = ChannelType.TEXT;
 
       if (typeof req.body.type === 'string') {
-        number_type = req.body.type == 'text' ? 0 : 1;
+        number_type = req.body.type == 'text' ? ChannelType.TEXT : ChannelType.VOICE;
       } else number_type = req.body.type;
 
       //Guild Text, Guild Voice, Guild Category, Guild News
@@ -814,11 +838,11 @@ router.post(
       let send_parent_id = null;
 
       if (req.body.parent_id) {
-        if (!guild.channels!!.find((x) => x.id === req.body.parent_id && x.type === 4)) {
+        if (!guild.channels!!.find((x) => x.id === req.body.parent_id && x.type === ChannelType.CATEGORY)) {
           return res.status(404).json(errors.response_404.UNKNOWN_CHANNEL);
         }
 
-        if (number_type !== 0 && number_type !== 2 && number_type != 5) {
+        if (number_type !== ChannelType.TEXT && number_type !== ChannelType.VOICE && number_type != ChannelType.NEWS) {
           return res.status(400).json({
             code: 400,
             message: "You're a wizard harry, how the bloody hell did you manage to do that?",
@@ -926,13 +950,18 @@ router.patch(
           );
         }
 
-        channel.position = position;
+        if (position !== undefined) {
+            channel.position = position;
+        }
 
-        if (parent_id) {
-          if (parent_id === null) channel.parent_id = null;
-
-          if (guild.channels!!.find((x) => x.id === parent_id && x.type === 4))
-            channel.parent_id = parent_id;
+        if (parent_id !== undefined) {
+          if (parent_id === null) {
+            channel.parent_id = null;
+          } else {
+            if (guild.channels!!.find((x) => x.id === parent_id && x.type === 4)) {
+                channel.parent_id = parent_id;
+            }
+          }
         }
 
         const outcome = await ChannelService.updateChannel(channel_id, channel);

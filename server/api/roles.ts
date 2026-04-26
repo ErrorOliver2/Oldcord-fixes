@@ -44,13 +44,21 @@ router.patch(
         });
       }
 
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['role_name']) {
+          throw 'Failed to get configured min-max limits for role_name length'
+      }
+
+      const roleNameLimit = limits['role_name'];
+
       if (
-        req.body.name.length < ctx.config!.limits['role_name'].min ||
-        req.body.name.length >= ctx.config!.limits['role_name'].max
+        req.body.name.length < roleNameLimit.min ||
+        req.body.name.length >= roleNameLimit.max
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${ctx.config!.limits['role_name'].min} and ${ctx.config!.limits['role_name'].max} characters.`,
+          name: `Must be between ${roleNameLimit.min} and ${roleNameLimit.max} characters.`,
         });
       }
 
@@ -246,11 +254,18 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const guild = req.guild;
+      const limits = ctx.config?.limits;
 
-      if (guild.roles!.length >= ctx.config!.limits['roles_per_guild'].max) {
+      if (!limits || !limits['role_name']) {
+          throw 'Failed to get configured limits for createRole route'
+      }
+
+      const rolesPerGuildLimit = limits['role_name'];
+
+      if (guild.roles!.length >= rolesPerGuildLimit.max) {
         return res.status(400).json({
           code: 400,
-          message: `Maximum number of roles per guild exceeded (${ctx.config!.limits['roles_per_guild'].max})`,
+          message: `Maximum number of roles per guild exceeded (${rolesPerGuildLimit.max})`,
         });
       }
 

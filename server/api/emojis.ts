@@ -38,10 +38,19 @@ router.post('/', guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Reques
     const account = req.account;
     const guild = req.guild;
 
-    if (guild.emojis!!.length >= ctx.config!.limits['emojis_per_guild'].max) {
+    const limits = ctx.config?.limits;
+
+    if (!limits || !limits['emojis_per_guild'] || !limits['emoji_name']) {
+      throw 'Failed to get configured limits for createEmoji route'
+    }
+
+    const emojisPerGuildLimit = limits['emojis_per_guild'];
+    const emojiNameLimit = limits['emoji_name'];
+
+    if (guild.emojis!!.length >= emojisPerGuildLimit.max) {
       return res.status(404).json({
         code: 404,
-        message: `Maximum emojis per guild exceeded (${ctx.config!.limits['emojis_per_guild'].max})`,
+        message: `Maximum emojis per guild exceeded (${emojisPerGuildLimit.max})`,
       });
     }
 
@@ -53,12 +62,12 @@ router.post('/', guildPermissionsMiddleware('MANAGE_EMOJIS'), async (req: Reques
     }
 
     if (
-      req.body.name.length < ctx.config!.limits['emoji_name'].min ||
-      req.body.name.length >= ctx.config!.limits['emoji_name'].max
+      req.body.name.length < emojiNameLimit.min ||
+      req.body.name.length >= emojiNameLimit.max
     ) {
       return res.status(400).json({
         code: 400,
-        name: `Must be between ${ctx.config!.limits['emoji_name'].min} and ${ctx.config!.limits['emoji_name'].max} characters.`,
+        name: `Must be between ${emojiNameLimit.min} and ${emojiNameLimit.max} characters.`,
       });
     }
 
@@ -171,13 +180,21 @@ router.patch(
         });
       }
 
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['emoji_name']) {
+        throw 'Failed to get configured limits for updateEmoji route'
+      }
+
+      const emojiNameLimit = limits['emoji_name'];
+
       if (
-        req.body.name.length < ctx.config!.limits['emoji_name'].min ||
-        req.body.name.length >= ctx.config!.limits['emoji_name'].max
+        req.body.name.length < emojiNameLimit.min ||
+        req.body.name.length >= emojiNameLimit.max
       ) {
         return res.status(400).json({
           code: 400,
-          name: `Must be between ${ctx.config!.limits['emoji_name'].min} and ${ctx.config!.limits['emoji_name'].max} characters.`,
+          name: `Must be between ${emojiNameLimit.min} and ${emojiNameLimit.max} characters.`,
         });
       }
 

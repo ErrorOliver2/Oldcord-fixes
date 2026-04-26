@@ -23,7 +23,6 @@ export interface Config {
     default_user_intents : {
         value : number;
     };
-    tenor_api_key: string;
     max_message_embeds: number;
     require_release_date_cookie: boolean;
     cache_authenticated_get_requests: boolean;

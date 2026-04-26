@@ -70,17 +70,25 @@ router.patch(
       const originalAcc = account;
 
       if (account.bot) {
+        const limits = ctx.config?.limits;
+
+        if (!limits || !limits['username']) {
+          throw 'Failed to get configured limits for updateMe bot route'
+        }
+
+        const usernameLimit = limits['username'];
+
         if (req.body.username) {
           account.username = req.body.username;
         }
 
         if (
-          account.username.length < ctx.config!.limits['username'].min ||
-          account.username.length >= ctx.config!.limits['username'].max
+          account.username.length < usernameLimit.min ||
+          account.username.length >= usernameLimit.max
         ) {
           return res.status(400).json({
             code: 400,
-            username: `Must be between ${ctx.config!.limits['username'].min} and ${ctx.config!.limits['username'].max} characters.`,
+            username: `Must be between ${usernameLimit.min} and ${usernameLimit.max} characters.`,
           });
         }
 

@@ -244,10 +244,17 @@ function toPublicAccount(account: Account, staffDetails: unknown, needsMfa: bool
 
 router.get('/@me', staffAccessMiddleware(1), async (req: Request, res: Response): Promise<Response> => {
   try {
+    const flags = ctx.config?.instance.flags;
+
+    if (!flags) {
+        throw 'Failed to get configured instance flags';
+    }
+
+    const mfa_required_flag = flags.includes("MFA_REQUIRED_FOR_ADMIN");
     const publicAccount = toPublicAccount(
       req.account,
       req.staff_details,
-      ctx.config?.instance.flags.includes("MFA_REQUIRED_FOR_ADMIN") as boolean
+      mfa_required_flag
     );
 
     return res.status(200).json(publicAccount);

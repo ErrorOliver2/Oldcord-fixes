@@ -38,6 +38,17 @@ router.post(
   ),
   async (req: Request, res: Response) => {
     try {
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['email'] || !limits['password'] || !limits['username']) {
+        throw 'Failed to get configured limits for register route';
+      }
+
+      const emailAddr = req.body.email.split('@')[0];
+      const emailLimit = limits['email'];
+      const passwordLimit = limits['password'];
+      const usernameLimit = limits['username'];
+
       const release_date = req.client_build;
 
       if (req.header('referer')?.includes('/invite/')) {
@@ -62,15 +73,13 @@ router.post(
           });
         }
 
-        const emailAddr = req.body.email.split('@')[0];
-
         if (
-          emailAddr.length < ctx.config!.limits['email'].min ||
-          emailAddr.length >= ctx.config!.limits['email'].max
+          emailAddr.length < emailLimit.min ||
+          emailAddr.length >= emailLimit.max
         ) {
           return res.status(400).json({
             code: 400,
-            email: `Must be between ${ctx.config!.limits['email'].min} and ${ctx.config!.limits['email'].max} characters.`,
+            email: `Must be between ${emailLimit.min} and ${emailLimit.max} characters.`,
           });
         }
 
@@ -95,12 +104,12 @@ router.post(
         } else {
           if (
             release_date != 'june_12_2015' &&
-            (req.body.password.length < ctx.config!.limits['password'].min ||
-              req.body.password.length >= ctx.config!.limits['password'].max)
+            (req.body.password.length < passwordLimit.min ||
+              req.body.password.length >= passwordLimit.max)
           ) {
             return res.status(400).json({
               code: 400,
-              password: `Must be between ${ctx.config!.limits['password'].min} and ${ctx.config!.limits['password'].max} characters.`,
+              password: `Must be between ${passwordLimit.min} and ${passwordLimit.max} characters.`,
             });
           }
         }
@@ -114,12 +123,12 @@ router.post(
       }
 
       if (
-        req.body.username.length < ctx.config!.limits['username'].min ||
-        req.body.username.length >= ctx.config!.limits['username'].max
+        req.body.username.length < usernameLimit.min ||
+        req.body.username.length >= usernameLimit.max
       ) {
         return res.status(400).json({
           code: 400,
-          username: `Must be between ${ctx.config!.limits['username'].min} and ${ctx.config!.limits['username'].max} characters.`,
+          username: `Must be between ${usernameLimit.min} and ${usernameLimit.max} characters.`,
         });
       }
 
@@ -464,7 +473,7 @@ router.post(
         return res.status(204).send();
       }
 
-      if (!ctx.config!.email_config.enabled) {
+      if (!ctx.config?.email_config.enabled) {
         return res.status(204).send();
       }
 

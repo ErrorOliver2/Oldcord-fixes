@@ -12,6 +12,7 @@ import type { User } from '../../types/user.ts';
 import { RelationshipType } from '../../types/relationship.ts';
 import { PUBLIC_USER_SELECT } from '../services/accountService.ts';
 import type { ConnectedAccount } from '../../types/account.ts';
+import { ChannelType } from '../../types/channel.ts';
 
 const router = Router({
   mergeParams: true
@@ -42,10 +43,7 @@ router.post(
       }
 
       if (!recipients) {
-        return res.status(400).json({
-          code: 400,
-          message: 'Valid recipients are required.',
-        });
+        return res.status(400).json(errors.response_400.INVALID_RECIPIENTS);
       }
 
       if (recipients.length > 9) {
@@ -88,9 +86,9 @@ router.post(
       }
 
       let channel: any = null;
-      let type = validRecipientIDs.length > 2 ? 3 : 1;
+      let type = validRecipientIDs.length > 2 ? ChannelType.GROUPDM : ChannelType.DM;
       
-      if (type == 1) {
+      if (type == ChannelType.DM) {
         const otherUserId = validRecipientIDs.find(id => id !== account.id);
 
         if (otherUserId) {
@@ -114,7 +112,7 @@ router.post(
         }
       }
 
-      if (type === 3) {
+      if (type === ChannelType.GROUPDM) {
         for (var validRecipientId of validRecipientIDs) {
           if (validRecipientId === account.id) {
             continue;
@@ -128,7 +126,7 @@ router.post(
           }
         }
 
-        type = validRecipientIDs.length > 2 ? 3 : 1;
+        type = validRecipientIDs.length > 2 ? ChannelType.GROUPDM : ChannelType.DM;
       }
 
       channel ??= await globalUtils.createChannel({
@@ -142,7 +140,7 @@ router.post(
 
       const pChannel = globalUtils.personalizeChannelObject(req, channel);
 
-      if (type == 3) await globalUtils.pingPrivateChannel(channel);
+      if (type == ChannelType.GROUPDM) await globalUtils.pingPrivateChannel(channel);
       else await dispatcher.dispatchEventTo(account.id, 'CHANNEL_CREATE', pChannel);
 
       return res.status(200).json(pChannel);

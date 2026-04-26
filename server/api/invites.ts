@@ -123,10 +123,18 @@ router.post(
         }
       });
 
-      if (usersGuild >= ctx.config!.limits['guilds_per_account'].max) {
+      const limits = ctx.config?.limits;
+
+      if (!limits || !limits['guilds_per_account']) {
+        throw 'Failed to get configured limits for useInvite route';
+      }
+
+      const guildsPerAccountLimit = limits['guilds_per_account'];
+      
+      if (usersGuild >= guildsPerAccountLimit.max) {
         return res.status(404).json({
           code: 404,
-          message: `Maximum number of guilds exceeded for this instance (${ctx.config!.limits['guilds_per_account'].max})`,
+          message: `Maximum number of guilds exceeded for this instance (${guildsPerAccountLimit.max})`,
         });
       }
 
