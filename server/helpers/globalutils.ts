@@ -18,6 +18,7 @@ import type { Bot } from '../types/bot.ts';
 import ctx from '../context.ts';
 import { RelationshipType } from '../types/relationship.ts';
 import { MessageService } from '../api/services/messageService.ts';
+import type { Presence } from '../types/presence.ts';
 
 const configPath = './config.json';
 
@@ -283,8 +284,8 @@ const globalUtils = {
 
     return result;
   },
-  getUserPresence: (member: any): any => {
-    const userId = String(member.id || member.user_id);
+  getUserPresence: (member: any): Presence => {
+    const userId = String(member.user.id || member.user_id);
     const uSessions = ctx.userSessions.get(userId);
     const activeSessions = uSessions
       ? Array.from(uSessions).filter((s: any) => !s.dead && s.presence)
@@ -293,7 +294,7 @@ const globalUtils = {
     if (activeSessions.length > 0) {
       const statuses = activeSessions.map((s: any) => s.presence.status);
 
-      let finalStatus = 'offline';
+      let finalStatus: "online" | "dnd" | "idle" | "invisible" | "offline" = 'offline';
 
       if (statuses.includes('online')) {
         finalStatus = 'online';
@@ -308,7 +309,7 @@ const globalUtils = {
 
       return {
         status: finalStatus,
-        game_id: primarySession.presence.game_id || null,
+        game: primarySession.presence.game || null,
         activities: primarySession.presence.activities || [],
         user: globalUtils.miniUserObject(member.user || primarySession.user),
       };
@@ -316,7 +317,7 @@ const globalUtils = {
 
     return {
       status: 'offline',
-      game_id: null,
+      game: null,
       activities: [],
       user: globalUtils.miniUserObject(member.user),
     };

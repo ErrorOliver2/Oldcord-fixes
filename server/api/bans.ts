@@ -80,7 +80,7 @@ router.put(
         await prisma.member.delete({
           where: {
             guild_id_user_id: {
-              user_id: member?.id,
+              user_id: member?.user.id,
               guild_id: req.params.guildid as string
             }
           }
@@ -90,14 +90,14 @@ router.put(
       await prisma.ban.create({
         data: {
           guild_id: req.params.guildid as string,
-          user_id: member?.id!!
+          user_id: member?.user.id
         }
       });
 
       await AuditLogService.insertEntry(
         req.params.guildid as string,
         sender.id,
-        member?.id!!,
+        member?.user.id,
         AuditLogActionType.MEMBER_BAN_ADD,
         req.headers['x-audit-log-reason'] as string || req.body.reason || null,
         [],
@@ -105,7 +105,7 @@ router.put(
       );
 
       if (userInGuild) {
-        await dispatcher.dispatchEventTo(member?.id, 'GUILD_DELETE', {
+        await dispatcher.dispatchEventTo(member?.user.id, 'GUILD_DELETE', {
           id: req.params.guildid,
         });
 

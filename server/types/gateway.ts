@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { Activity, Game } from './presence.ts';
 
 // TODO: Add in all payloads
 
@@ -102,9 +103,9 @@ export type GatewayHeartbeatAck = GatewayPacket<number | null> & { op: GatewayOp
 export type GatewayPresencePacket = GatewayPacket<{
   status: 'online' | 'dnd' | 'idle' | 'invisible' | 'offline';
   since: number | null;
-  activities: any[];
+  activities: Activity[];
   afk: boolean;
-  game?: string | null;
+  game?: Game | null;
   game_id?: string | null;
   idle_since?: number | null;
 }>;

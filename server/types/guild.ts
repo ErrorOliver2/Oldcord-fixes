@@ -1,6 +1,7 @@
 import type { Channel } from "./channel.ts";
 import type { Emoji } from "./emoji.ts";
 import type { Member } from "./member.ts";
+import type { Presence } from "./presence.ts";
 import type { Role } from "./role.ts";
 import type { VoiceState } from "./voice.ts";
 import type { Webhook } from "./webhook.ts";
@@ -57,7 +58,7 @@ export interface Guild {
   webhooks?: Webhook[];
   guild_scheduled_events?: any[];
   stage_instances?: any[];
-  presences?: any[];
+  presences?: Presence[];
   properties?: any;
   large?: boolean;
   member_count?: number;

@@ -56,7 +56,6 @@ export const GuildService = {
                 return {
                     deaf: member.deaf,
                     mute: member.mute,
-                    id: member.user_id,
                     nick: member.nick,
                     roles: member.roles,
                     joined_at: member.joined_at,
@@ -621,7 +620,6 @@ export const GuildService = {
                     last_message_id: c.type === 0 ? '0' : undefined
                 })),
                 members: [{
-                    id: owner.id,
                     user: globalUtils.miniUserObject(owner),
                     nick: null,
                     roles: [],

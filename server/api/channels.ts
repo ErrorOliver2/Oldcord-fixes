@@ -68,7 +68,6 @@ router.post(
         }
 
         payload.member = {
-          id: account.id,
           joined_at: new Date().toISOString(),
           deaf: false,
           mute: false,
@@ -576,7 +575,7 @@ router.put(
       }
 
       if (type == 'member') {
-        const member = guild.members?.find((x) => x.id === id);
+        const member = guild.members?.find((x) => x.user.id === id);
 
         if (member == null) {
           return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);

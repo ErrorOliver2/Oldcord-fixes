@@ -447,7 +447,7 @@ async function guildMiddleware(req: Request, res: Response, next: NextFunction) 
       return next();
     }
 
-    const member = guild.members?.find((y) => y.id == req.account.id);
+    const member = guild.members?.find((y) => y.user.id == req.account.id);
 
     if (!member) {
       return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
@@ -481,7 +481,7 @@ function memberMiddleware(req: Request, res: Response, next: NextFunction) {
       return res.status(404).json(errors.response_404.UNKNOWN_GUILD);
     }
 
-    const member = req.guild.members.find((x) => x.id === memberid);
+    const member = req.guild.members.find((x) => x.user.id === memberid);
 
     if (!member) {
       return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);
@@ -732,7 +732,7 @@ async function channelMiddleware(req: Request, res: Response, next: NextFunction
         const hasPermission = await permissions.hasChannelPermissionTo(
           req.channel.id,
           req.guild.id,
-          member.id,
+          member.user.id,
           'READ_MESSAGES'
         );
 
@@ -894,7 +894,7 @@ function channelPermissionsMiddleware(permission: string) {
             (guild) =>
               guild.members != null &&
               guild.members.length > 0 &&
-              guild.members.some((member: any) => member.id === sender.id),
+              guild.members.some((member) => member.user_id === sender.id),
           );
 
           if (!friends) {

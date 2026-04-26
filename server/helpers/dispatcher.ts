@@ -162,6 +162,15 @@ const dispatcher = {
           } else if (current_status === 'dnd') {
             finalPayload.status = 'online';
           }
+
+          if (finalPayload.game) {
+            finalPayload.game_id = finalPayload.game.application_id || finalPayload.game.name || null;
+          } else {
+            finalPayload.game_id = null;
+          }
+
+          delete finalPayload.game;
+          delete finalPayload.activities;
         }
       }
 
@@ -220,6 +229,15 @@ const dispatcher = {
               } else if (current_status === 'dnd') {
                 finalPayload.status = 'online';
               }
+
+              if (finalPayload.game) {
+                finalPayload.game_id = finalPayload.game.application_id || finalPayload.game.name || null;
+              } else {
+                finalPayload.game_id = null;
+              }
+
+              delete finalPayload.game;
+              delete finalPayload.activities;
             }
         }
 

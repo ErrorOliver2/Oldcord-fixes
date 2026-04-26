@@ -140,7 +140,7 @@ router.post(
 
       let joinAttempt = true;
 
-      const member = guild.members?.find((x) => x.id === sender.id);
+      const member = guild.members?.find((x) => x.user.id === sender.id);
 
       if (member != null) {
         joinAttempt = false;

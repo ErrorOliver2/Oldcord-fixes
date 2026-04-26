@@ -20,6 +20,7 @@ import permissions from './permissions.ts';
 import ctx from '../context.ts';
 import type { Guild } from '../types/guild.ts';
 import { RelationshipService } from '../api/services/relationshipService.ts';
+import type { Game, Presence, StatusType } from '../types/presence.ts';
 
 let erlpack: any = null;
 
@@ -41,12 +42,12 @@ class session implements Session {
   public socket: any;
   public user: Account;
   public ready: boolean;
-  public presence: any;
+  public presence: Presence;
   public type: 'gateway' | 'voice';
   public dead: boolean;
   public ratelimited: boolean;
   public unavailable_guilds: any[];
-  public presences: any[];
+  public presences: Presence[];
   public read_states: any[];
   public guildCache: Guild[];
   public apiVersion: number;
@@ -71,7 +72,7 @@ class session implements Session {
     user: any,
     token: string,
     ready: boolean,
-    presence: any,
+    presence: Presence,
     type: 'gateway' | 'voice',
     guild_id = "0",
     channel_id = "0",
@@ -109,17 +110,32 @@ class session implements Session {
     this.socket = null;
     this.timeout = setTimeout(this.terminate.bind(this), SESSION_TIMEOUT);
   }
-  async updatePresence(status: string, game_id = null, save_presence = true, bypass_check = false) {
+
+  isSameGame(g1: any, g2: any): boolean {
+    if (!g1 && !g2) return true;
+    if (!g1 || !g2) return false;
+
+    return (
+      g1.name === g2.name &&
+      g1.type === g2.type &&
+      g1.url === g2.url &&
+      g1.details === g2.details &&
+      g1.state === g2.state &&
+      g1.application_id === g2.application_id &&
+      JSON.stringify(g1.assets) === JSON.stringify(g2.assets)
+    );
+  }
+
+  async updatePresence(status: string, game: Game | null = null, save_presence = true, bypass_check = false) {
     if (this.type !== 'gateway') {
       return;
     }
 
     try {
-      if (
-        this.presence.status.toLowerCase() === status.toLowerCase() &&
-        this.presence.game_id === game_id &&
-        !bypass_check
-      ) {
+      const isStatusSame = this.presence.status.toLowerCase() === status.toLowerCase();
+      const isGameSame = this.isSameGame(this.presence.game, game);
+
+      if (isStatusSame && isGameSame && !bypass_check) {
         return;
       }
 
@@ -144,8 +160,9 @@ class session implements Session {
         //prevent users from saving offline as their last seen status... as u cant do that
       }
 
-      this.presence.status = status.toLowerCase();
-      this.presence.game_id = game_id;
+      this.presence.status = status.toLowerCase() as StatusType;
+      this.presence.activities = game ? [game] : [];
+      this.presence.game = game;
 
       const broadcastStatus: string =
         status.toLowerCase() === 'invisible' ? 'offline' : status.toLowerCase(); //this works i think
@@ -240,35 +257,40 @@ class session implements Session {
   async dispatchPresenceUpdate(presenceOverride: any = null) {
     if (this.type !== 'gateway') return;
 
-    const presence = this.presence;
-
-    if (presenceOverride != null) {
-      presence.status = presenceOverride;
-    }
+    const broadcastStatus = (presenceOverride || (this.presence.status === 'invisible' ? 'offline' : this.presence.status)) as StatusType;
 
     const guilds = await prisma.guild.findMany({
       where: {
-        members: { some: { user_id: this.user.id } }
+        members: { 
+          some: { 
+            user_id: this.user.id 
+          } 
+        }
       },
       include: {
-        members: { 
-          include: { user: true }
+        members: {
+          include: { 
+            user: true 
+          }
         },
         channels: true,
         roles: true
       }
-    });
+    }); 
 
     for(const guild of guilds) {
-      const broadcastStatus = presence.status === 'invisible' ? 'offline' : presence.status;
-
-      const guildSpecificPresence = {
+      const guildSpecificPresence: Presence = {
         status: broadcastStatus,
-        game_id: presence.game_id || null,
-        activities: [],
+        game: this.presence.game || null,
+        activities: this.presence.activities || [],
         guild_id: guild.id,
-        user: globalUtils.miniUserObject(this.user),
-        roles: guild.members.find((x) => x.user_id === this.user.id)?.roles as string[] || [],
+        user: { 
+          id: this.user.id,
+          username: this.user.username,
+          avatar: this.user.avatar,
+          discriminator: this.user.discriminator,
+          bot: this.user.bot
+        }
       };
 
       await dispatcher.dispatchEventInGuild(guild.id, 'PRESENCE_UPDATE', guildSpecificPresence);
@@ -301,7 +323,7 @@ class session implements Session {
       const our_member = {
         user: globalUtils.miniUserObject(this.user),
         id: this.user.id,
-        joined_at: new Date().toISOString(),
+        joined_at: our_member_row.joined_at,
         deaf: our_member_row.deaf,
         roles: our_member_row.roles as string[],
         mute: our_member_row.mute,
@@ -337,8 +359,9 @@ class session implements Session {
         await this.updatePresence('offline', null);
       } else {
         const lastSession = uSessions[uSessions.length - 1];
+        lastSession.presence
 
-        await this.updatePresence(lastSession.presence.status, lastSession.presence.game_id);
+        await this.updatePresence(lastSession.presence.status, lastSession.presence.game);
       }
     }
   }
@@ -565,7 +588,7 @@ class session implements Session {
             if (this.presences.find((x) => x.user.id === presence.user.id)) continue;
 
             this.presences.push({
-              game_id: null,
+              game: null,
               user: globalUtils.miniUserObject(presence.user),
               activities: [],
               status: presence.status,

@@ -13,6 +13,7 @@ import type { Member } from '../types/member.ts';
 import { logText } from '../helpers/logger.ts';
 import ctx from '../context.ts';
 import type { Session } from '../types/session.ts';
+import type { Activity, Game, StatusType } from '../types/presence.ts';
 
 async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) {
   const { token, intents, presence } = packet.d;
@@ -62,11 +63,10 @@ async function handleIdentify(socket: WebSocket, packet: GatewayIdentifyPacket) 
     token,
     false,
     {
-      game_id: null,
+      game: null,
       status: finalStatus,
       activities: [],
       user: globalUtils.miniUserObject(user as User),
-      roles: [],
     },
     "gateway",
     undefined,
@@ -103,24 +103,43 @@ async function handlePresence(socket: WebSocket, packet: GatewayPresencePacket) 
 
   const { d } = packet;
   const isLegacy = socket.client_build?.includes('2015');
-  const gameField = isLegacy ? d.game_id : d.game;
+
+  let gameField: Game | null = null;
+
+  if (isLegacy && d.game_id) {
+      gameField = { name: "Legacy Game", type: 0, application_id: String(d.game_id), url: null }; //to-do figure out twitch streaming here
+  } else if (d.game) {
+      gameField = d.game;
+  } else if (d.activities && d.activities.length > 0) {
+      gameField = d.activities[0];
+  }
+
+  let activitiesField: Activity[] = d.activities || (gameField ? [gameField] : []);
+
+  if (!gameField && activitiesField.length > 0) {
+    gameField = activitiesField[0];
+  }
 
   let setStatusTo = (!isLegacy && d.status) ? d.status.toLowerCase() : 'online';
 
   const isIdleRequested = isLegacy ? (d.idle_since != null || d.afk === true) : (d.since != 0 || d.afk === true);
 
-  setStatusTo = isIdleRequested ? 'idle' : 'online';
+  if (isIdleRequested) {
+    setStatusTo = 'idle';
+  }
+
   socket.session.last_idle = isIdleRequested ? Date.now() : 0;
 
   for (const session of allSessions) {
     if (session.id !== socket.session.id) {
-      session.presence.status = setStatusTo;
-      session.presence.game_id = gameField;
+      session.presence.status = setStatusTo as StatusType;
+      session.presence.game = gameField;
+      session.presence.activities = activitiesField;
       session.last_idle = socket.session.last_idle;
     }
   }
 
-  await socket.session.updatePresence(setStatusTo, gameField);
+  await socket.session.updatePresence(setStatusTo, gameField, true, false);
 }
 
 async function handleVoiceState(socket: WebSocket, packet: GatewayVoiceStatePacket) {
@@ -429,11 +448,10 @@ async function handleResume(socket: WebSocket, packet: GatewayResumePacket) {
       token,
       false,
       {
-        game_id: null,
-        status: (user?.settings as AccountSettings).status ?? 'online',
+        game: null,
+        status: ((user?.settings as AccountSettings).status as StatusType) ?? 'online',
         activities: [],
-        user: globalUtils.miniUserObject(user as User),
-        roles: [],
+        user: globalUtils.miniUserObject(user as User)
       },
       "gateway",
       undefined,

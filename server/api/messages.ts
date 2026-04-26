@@ -400,6 +400,18 @@ router.post(
         mentions_data.mention_here = false;
       }
 
+      const filteredRoles: string[] = [];
+
+      for (const roleId of mentions_data.mention_roles) {
+        const role = guild.roles?.find((r: any) => r.id === roleId);
+
+        if (role && role.mentionable) {
+          filteredRoles.push(roleId);
+        }
+      }
+
+      mentions_data.mention_roles = filteredRoles;
+
       if (channel.recipients) {
         const canDM = await validateDMRules(account, channel); //DM/Group channel rules
 

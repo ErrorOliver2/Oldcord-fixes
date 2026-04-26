@@ -10,6 +10,7 @@ import type { Channel } from '../types/channel.ts';
 import type { Role } from '../types/role.ts';
 import type { Member } from '../types/member.ts';
 import ctx from '../context.ts';
+import type { StatusType } from '../types/presence.ts';
 
 const lazyRequest = {
   getSortedList: (guild: Guild): Member[] => {
@@ -79,9 +80,12 @@ const lazyRequest = {
       );
     }
 
-    function formatMemberItem(member: Member, forcedStatus: string | null = null) {
+    function formatMemberItem(member: Member, forcedStatus: StatusType | null = null) {
       const p = globalUtils.getUserPresence(member);
-      if (forcedStatus != null) p.status = forcedStatus;
+
+      if (forcedStatus != null) {
+        p.status = forcedStatus;
+      }
 
       return {
         member: {
@@ -93,7 +97,7 @@ const lazyRequest = {
 
     const visibleMembers = guild.members?.filter((m) => {
       return (
-        permissions.hasChannelPermissionTo(channel.id, guild.id, m.id, 'READ_MESSAGES') ||
+        permissions.hasChannelPermissionTo(channel.id, guild.id, m.user.id, 'READ_MESSAGES') ||
         bypassPerms
       );
     });

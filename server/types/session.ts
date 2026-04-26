@@ -1,4 +1,5 @@
 import type { Guild } from "./guild.ts";
+import type { Game, Presence } from "./presence.ts";
 import type { User } from "./user.ts";
 import type { WebSocket } from "ws";
 
@@ -10,7 +11,7 @@ export interface Session {
     seq: number;
     time: number;
     ready: boolean;
-    presence: any;
+    presence: Presence;
     type: 'gateway' | 'voice'; //or voice
     dead: boolean;
     lastMessage: number
@@ -20,7 +21,7 @@ export interface Session {
     guild_id: string;
     eventsBuffer: any[];
     unavailable_guilds: Guild[];
-    presences: any[];
+    presences: Presence[];
     read_states: any[];
     subscriptions: any;
     memberListCache: any;
@@ -30,7 +31,7 @@ export interface Session {
     application: any;
 
     onClose(code: number): void;
-    updatePresence(status: string, game_id?: any, save_presence?: boolean, bypass_check?: boolean): Promise<void>;
+    updatePresence(status: string, game: Game | null, save_presence: boolean, bypass_check: boolean): Promise<void>;
     dispatch(type: string, payload: any): Promise<void>;
     dispatchPresenceUpdate(presenceOverride?: any): Promise<void>;
     dispatchSelfUpdate(): Promise<void>;

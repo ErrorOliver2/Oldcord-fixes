@@ -135,7 +135,7 @@ router.post(
                 user: globalUtils.miniUserObject(guild.members!![0]?.user!!),
                 status: presence.status,
                 activities: [],
-                game_id: null,
+                game: null
               },
               joined_at: joined_at,
               mute: false,
@@ -155,7 +155,7 @@ router.post(
                 user: globalUtils.miniUserObject(guild.members!![0]?.user!!),
                 status: 'offline',
                 activities: [],
-                game_id: null,
+                game: null
               },
               joined_at: joined_at,
               mute: false,
@@ -435,7 +435,7 @@ router.patch(
           });
         } //Response??
 
-        const new_owner = guild.members?.find((x) => x.id == req.body.owner_id);
+        const new_owner = guild.members?.find((x) => x.user.id == req.body.owner_id);
 
         if (!new_owner) {
           return res.status(404).json(errors.response_404.UNKNOWN_MEMBER);

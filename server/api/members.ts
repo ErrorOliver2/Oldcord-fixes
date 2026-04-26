@@ -14,7 +14,7 @@ import type { Member } from '../types/member.ts';
 import ctx from '../context.ts';
 import type { Guild } from '../types/guild.ts';
 import { AuditLogService } from './services/auditLogService.ts';
-import { AuditLogActionType } from '../types/auditlog.ts';
+import { AuditLogActionType, type AuditLogChange } from '../types/auditlog.ts';
 
 interface ErrorReponse {
   code: number;
@@ -92,7 +92,7 @@ async function updateMember(guild: Guild, member: Member, roles?: (string | { id
     if (JSON.stringify(currentRoles) !== JSON.stringify(incomingRoles)) {
       rolesChanged = true;
 
-      const success = await RoleService.setRoles(guild.id, newRoles, member.id!!);
+      const success = await RoleService.setRoles(guild.id, newRoles, member.user.id);
 
       if (!success) {
         return errors.response_500.INTERNAL_SERVER_ERROR as ErrorReponse;
@@ -142,7 +142,7 @@ async function updateMember(guild: Guild, member: Member, roles?: (string | { id
     };
 
     await dispatcher.dispatchEventInGuild(guild.id, 'GUILD_MEMBER_UPDATE', updatePayload);
-    await lazyRequest.syncMemberList(guild, member.id!!);
+    await lazyRequest.syncMemberList(guild, member.user.id);
   }
 
   return {
@@ -152,6 +152,16 @@ async function updateMember(guild: Guild, member: Member, roles?: (string | { id
     nick: member.nick,
   };
 }
+
+const getMemberHighestRole = (member: Member, guild: Guild) => {
+  if (member.user.id === guild.owner_id) return 9999; //holy shit
+
+  const memberRoles = guild.roles?.filter((r) => member.roles.includes(r.id));
+
+  if (!memberRoles || memberRoles?.length === 0) return 0;
+
+  return Math.max(...memberRoles.map((r) => r.position));
+};
 
 router.patch(
   '/:memberid',
@@ -165,7 +175,7 @@ router.patch(
     try {
       const member = req.member;
       const guild = req.guild;
-      const auditChanges: any[] = [];
+      const auditChanges: AuditLogChange[] = [];
 
       if (req.body.nick !== undefined && req.body.nick !== member.nick) {
         auditChanges.push({
@@ -207,7 +217,28 @@ router.patch(
       const newRoleIds = req.body.roles;
       const addedRoles = newRoleIds.filter((id: string) => !oldRoleIds.includes(id));
       const removedRoles = oldRoleIds.filter((id: string) => !newRoleIds.includes(id));
+      const affectedRoles = [...addedRoles, ...removedRoles];
       const roleAuditLogChanges: any[] = [];
+      const ourMember = guild.members?.find(x => x.user.id === req.account.id);
+
+      if (!ourMember) {
+        return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR); //??
+      }
+
+      const actorHighest = getMemberHighestRole(ourMember, guild);
+      const targetHighest = getMemberHighestRole(member, guild);
+
+      if (req.account.id !== guild.owner_id && actorHighest <= targetHighest) {
+        return res.status(403).json(errors.response_403.MISSING_PERMISSIONS); //Find a more appropriate error here
+      }
+
+      for (const roleId of affectedRoles) {
+        const role = guild.roles?.find(r => r.id === roleId);
+        
+        if (role && role.position >= actorHighest && req.account.id !== guild.owner_id) {
+          return res.status(403).json(errors.response_403.MISSING_PERMISSIONS); //Find a more appropriate error here
+        }
+      }
 
       if (addedRoles.length > 0) {
           roleAuditLogChanges.push({
@@ -252,9 +283,9 @@ router.patch(
         nick: newMember.nick,
         guild_id: req.guild.id,
         roles: newMember.roles,
-        joined_at: new Date().toISOString(),
-        deaf: false,
-        mute: false,
+        joined_at: member.joined_at,
+        deaf: member.deaf,
+        mute: member.mute,
       });
     } catch (error) {
       logText(error, 'error');
@@ -273,7 +304,7 @@ router.patch(
   async (req: Request, res: Response) => {
     try {
       const account = req.account;
-      const member = req.guild.members?.find((y) => y.id == account.id); 
+      const member = req.guild.members?.find((y) => y.user.id == account.id); 
 
       if (!member) {
         return res.status(500).json(errors.response_500.INTERNAL_SERVER_ERROR);
